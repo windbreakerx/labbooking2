@@ -1,9 +1,4 @@
-"""Base settings shared by dev/prod/test.
-
-Apps (users/academics/scheduling/bookings) are added starting Day 2 —
-this skeleton only wires Django defaults, PostgreSQL, cache and the
-background task queue.
-"""
+"""Base settings shared by dev/prod/test."""
 
 import importlib.util
 from pathlib import Path
@@ -28,7 +23,13 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "apps.users",
+    "apps.academics",
+    "apps.scheduling",
+    "apps.bookings",
 ]
+
+AUTH_USER_MODEL = "users.User"
 
 # django-q2 is a hard dependency, but keep the defensive check from v1 so the
 # task queue can be disabled in constrained environments without editing code.
