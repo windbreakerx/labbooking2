@@ -1,11 +1,13 @@
-"""Видимость данных для студента: что он может видеть и на что записываться.
+"""Видимость данных: студенческий скоуп (учебный план группы) и каталог сотрудников.
 
 Студентческий скоуп выводится через учебный план группы (GroupDisciplineLoad
 с fallback на M2M) + исключения по ЛР (GroupLabWorkOverride).
+Стафф-скоуп — по лаборатории сотрудника (SYS_ADMIN видит всё); УЦ дисциплины
+выводится через laboratories → training_center (legacy training_centers срезан).
 """
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 
 from apps.academics.models import (
     Discipline,
@@ -15,7 +17,7 @@ from apps.academics.models import (
     LabWork,
     StudentGroup,
 )
-from apps.scheduling.models import Laboratory
+from apps.scheduling.models import Laboratory, TrainingCenter
 from apps.users.models import User, UserRole
 
 
@@ -135,3 +137,112 @@ def resolve_staff_laboratory(user: User) -> Laboratory | None:
     if not profile.training_center:
         return None
     return profile.training_center.laboratories.order_by("name").first()
+
+
+def resolve_staff_training_center(user: User) -> TrainingCenter | None:
+    """УЦ сотрудника: УЦ лаборатории профиля, иначе УЦ профиля."""
+    profile = _safe_profile(user)
+    if not profile:
+        return None
+    if profile.laboratory_id:
+        return profile.laboratory.training_center
+    return profile.training_center
+
+
+def student_support_training_centers_qs(user: User) -> QuerySet[TrainingCenter]:
+    """УЦ, куда студент может написать в поддержку: через свои дисциплины и ЛР."""
+    group = resolve_student_group(user)
+    if not group:
+        return TrainingCenter.objects.none()
+    discipline_ids = student_disciplines_qs(user).values_list("pk", flat=True)
+    lab_work_ids = student_lab_works_qs(user).values_list("pk", flat=True)
+    return TrainingCenter.objects.filter(
+        Q(laboratories__disciplines__in=discipline_ids) | Q(lab_works__in=lab_work_ids)
+    ).distinct()
+
+
+# --- Каталог сотрудников --------------------------------------------------------
+
+
+def _staff_catalog_qs(user, published_qs, all_qs, laboratory):
+    """Общий каркас скоупа каталога: сисадмин — всё; по лаборатории; иначе по УЦ."""
+    if user.role == UserRole.SYS_ADMIN:
+        return published_qs
+    if laboratory:
+        return published_qs.filter(laboratories=laboratory)
+    tc = resolve_staff_training_center(user)
+    if not tc:
+        return all_qs.none()
+    return published_qs.filter(laboratories__training_center=tc)
+
+
+def staff_disciplines_qs(user: User) -> QuerySet[Discipline]:
+    """Опубликованные дисциплины активного семестра в зоне доступа сотрудника."""
+    lab = resolve_staff_laboratory(user)
+    return _staff_catalog_qs(
+        user,
+        published_disciplines_qs().select_related("semester", "department"),
+        Discipline.objects,
+        lab,
+    )
+
+
+def lab_head_disciplines_qs(user: User) -> QuerySet[Discipline]:
+    """Все дисциплины лаборатории для панели завлаба (включая неопубликованные)."""
+    return _staff_catalog_qs(
+        user,
+        Discipline.objects.select_related("semester", "department"),
+        Discipline.objects,
+        resolve_staff_laboratory(user),
+    ).order_by("title")
+
+
+def staff_lab_works_qs(user: User, discipline_id: int | None = None) -> QuerySet[LabWork]:
+    qs = LabWork.objects.filter(
+        is_published=True, disciplines__semester__is_active=True
+    ).distinct()
+    if discipline_id is not None:
+        qs = qs.filter(disciplines=discipline_id)
+    return _staff_catalog_qs(user, qs, LabWork.objects, resolve_staff_laboratory(user))
+
+
+def lab_head_lab_works_qs(user: User) -> QuerySet[LabWork]:
+    """Все ЛР лаборатории для панели завлаба (включая неопубликованные)."""
+    return _staff_catalog_qs(
+        user,
+        LabWork.objects.prefetch_related("disciplines", "disciplines__department"),
+        LabWork.objects,
+        resolve_staff_laboratory(user),
+    ).order_by("number", "title")
+
+
+def staff_students_qs(user: User) -> QuerySet[User]:
+    """Студенты, чей учебный план пересекается с дисциплинами лаборатории,
+    либо имеющие записи в зоне доступа сотрудника."""
+    from apps.bookings.scope import staff_bookings_qs
+
+    qs = User.objects.filter(role=UserRole.STUDENT).select_related(
+        "profile", "profile__student_group"
+    )
+    if user.role == UserRole.SYS_ADMIN:
+        return qs.order_by("last_name", "first_name", "email")
+
+    discipline_ids = lab_head_disciplines_qs(user).values_list("pk", flat=True)
+    booking_student_ids = staff_bookings_qs(user).values_list("student_id", flat=True)
+    if not discipline_ids and not booking_student_ids:
+        return User.objects.none()
+
+    filters = Q(pk__in=booking_student_ids)
+    if discipline_ids:
+        loaded_group_ids = GroupDisciplineLoad.objects.filter(
+            semester__is_active=True, is_active=True, discipline_id__in=discipline_ids
+        ).values_list("group_id", flat=True)
+        fallback_group_ids = StudentGroup.objects.filter(
+            disciplines__in=discipline_ids
+        ).values_list("pk", flat=True)
+        filters |= (
+            Q(profile__student_group_id__in=loaded_group_ids)
+            | Q(profile__student_group_id__in=fallback_group_ids)
+            | Q(profile__student_group__lab_works__disciplines__in=discipline_ids)
+        )
+    return qs.filter(filters).distinct().order_by("last_name", "first_name", "email")
