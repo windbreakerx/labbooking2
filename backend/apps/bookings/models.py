@@ -34,13 +34,12 @@ class Booking(models.Model):
     discipline = models.ForeignKey(Discipline, on_delete=models.CASCADE, related_name="bookings")
     room = models.ForeignKey(Room, on_delete=models.PROTECT, related_name="bookings")
     scheduled_at = models.DateTimeField("Дата и время ЛР")
-    current_status = models.CharField(max_length=16, choices=BookingStatus.choices, default=BookingStatus.BOOKED, help_text="Текущее состояние строки записи.")
+    current_status = models.CharField(max_length=16, choices=BookingStatus.choices, default=BookingStatus.BOOKED)
     had_no_show = models.BooleanField(
         "Была неявка", default=False,
-        help_text="Факт засчитанной неявки (слой 2): ставится при первом NO_SHOW, сохраняется после "
-        "REACCESS, снимается только исправлением NO_SHOW → VISITED. Нужен для отчётов и аналитики.",
+        help_text="Факт неявки: ставится при первом NO_SHOW, переживает REACCESS, снимается исправлением NO_SHOW → VISITED.",
     )
-    cancel_source = models.CharField("Кто отменил запись", max_length=16, choices=CancelSource.choices, null=True, blank=True, help_text="Заполняется только для статуса CANCELLED: студент или сотрудник.")
+    cancel_source = models.CharField("Кто отменил запись", max_length=16, choices=CancelSource.choices, null=True, blank=True)
     registration_type = models.CharField(max_length=16, choices=RegistrationType.choices, default=RegistrationType.AUTO)
     registered_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="registered_bookings")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -73,7 +72,7 @@ class BookingStatusHistory(models.Model):
     changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     changed_at = models.DateTimeField(auto_now_add=True)
     note = models.TextField(blank=True)
-    acknowledged_at = models.DateTimeField("Просмотрено студентом", null=True, blank=True, help_text="Когда студент просмотрел уведомление об изменении статуса.")
+    acknowledged_at = models.DateTimeField("Просмотрено студентом", null=True, blank=True)
 
     class Meta:
         verbose_name = "История статуса"
@@ -86,19 +85,14 @@ class BookingStatusHistory(models.Model):
 
 
 class StudentLabAttendance(models.Model):
-    """Per-laboratory no-show counter and explanation flag for a student.
-
-    Счётчик неявок в лаборатории и флаг объяснительной (≥3). Сам по себе запись не
-    блокирует — только информирует сотрудников и показывает студенту уведомление.
-    """
+    """Счётчик неявок студента по лаборатории и флаг «требуется объяснительная» (≥3)."""
 
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name="lab_attendance")
     laboratory = models.ForeignKey(Laboratory, on_delete=models.CASCADE, related_name="student_attendance")
-    no_show_count = models.PositiveIntegerField("Количество неявок", default=0, help_text="Сколько раз студенту ставили неявку в этой лаборатории (сохраняется для аналитики).")
+    no_show_count = models.PositiveIntegerField("Количество неявок", default=0)
     explanation_required = models.BooleanField(
         "Требуется объяснительная", default=False,
-        help_text=f"True при {NO_SHOW_EXPLANATION_THRESHOLD}+ неявках в этой лаборатории. Снимается сотрудником "
-        "после получения объяснительной; счётчик неявок при этом не сбрасывается.",
+        help_text=f"True при {NO_SHOW_EXPLANATION_THRESHOLD}+ неявках; снимается сотрудником, счётчик сохраняется.",
     )
     updated_at = models.DateTimeField(auto_now=True)
 

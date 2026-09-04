@@ -68,11 +68,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# PostgreSQL only — no SQLite fallback (dev and test both require a running
-# PostgreSQL 16 instance; see docs/REBUILD_SESSION_BRIEF.md §4/§5).
+# PostgreSQL only — no SQLite fallback (dev and test require a running
+# PostgreSQL 16 instance; local dev uses a portable instance on port 5433).
 DATABASES = {
     "default": env.db("DATABASE_URL"),
 }
+
+# Booking window defaults; per-laboratory overrides live in LaboratoryBookingSettings.
+BOOKING_HORIZON_DAYS = env.int("BOOKING_HORIZON_DAYS", default=14)
+BOOKING_CANCEL_HOURS = env.int("BOOKING_CANCEL_HOURS", default=24)
+MANUAL_BOOKING_WORKING_WEEKS = env.int("MANUAL_BOOKING_WORKING_WEEKS", default=2)
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

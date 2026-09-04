@@ -47,11 +47,7 @@ class Laboratory(models.Model):
 
 
 class LabDisciplineBinding(models.Model):
-    """Привязка дисциплины к лаборатории — с аудитом кто/когда/почему (заменяет голый M2M).
-
-    Завлаб бинда к дисциплине своего факультета; ``is_override=True`` — вне факультета,
-    только SYS_ADMIN, требует ``reason`` (BindingService, День 4).
-    """
+    """Привязка дисциплины к лаборатории с аудитом кто/когда/почему (заменяет голый M2M)."""
 
     laboratory = models.ForeignKey(Laboratory, on_delete=models.CASCADE, related_name="discipline_bindings", verbose_name="Лаборатория")
     discipline = models.ForeignKey("academics.Discipline", on_delete=models.CASCADE, related_name="laboratory_bindings", verbose_name="Дисциплина")
@@ -86,7 +82,6 @@ class Room(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="default_staff_rooms",
         verbose_name="Сотрудник лаборатории по умолчанию", limit_choices_to={"role__in": ["LAB_ADMIN", "LAB_HEAD"]},
     )
-
     class Meta:
         verbose_name = "Аудитория"
         verbose_name_plural = "Аудитории"
@@ -126,10 +121,16 @@ class LabSession(models.Model):
 
     @property
     def booked_count(self):
-        # available_seats (учитывает лимиты стенда/waitlist) добавляется в День 3 вместе с SessionAvailabilityService.
         from apps.bookings.models import BookingStatus
 
         return self.bookings.filter(current_status=BookingStatus.BOOKED).count()
+
+    @property
+    def available_seats(self) -> int:
+        """Свободные места с учётом лимитов аудитории/ЛР/стенда (SessionAvailabilityService)."""
+        from apps.bookings.services.session_availability import session_available_seats
+
+        return session_available_seats(self)
 
     def is_stand_blocked_by_other_lab_work(self) -> bool:
         stand_id = self.lab_work.primary_stand_id
@@ -166,9 +167,6 @@ class ScheduleDutyRole(models.TextChoices):
     LAB_STAFF_DUTY = "LAB_STAFF_DUTY", "Дежурство сотрудника лаборатории"
     TEACHER_DUTY = "TEACHER_DUTY", "Дежурство преподавателя"
     OTHER = "OTHER", "Другое"
-
-
-SCHEDULE_SLOT_DURATION_MINUTES = 90
 
 
 class AutoVisitedMode(models.TextChoices):
@@ -214,12 +212,7 @@ class LabStand(models.Model):
 
 
 class ScheduleEntry(models.Model):
-    """Еженедельный шаблон слота расписания.
-
-    Что читается в слоте определяется через ``disciplines`` (M2M-through
-    ``ScheduleEntryDisciplineSelection``) — единая точка правды вместо параллельных
-    singular lab_work/discipline + голого M2M lab_works, как было в v1.
-    """
+    """Еженедельный шаблон слота: читаемое в слоте определяется через ``disciplines``."""
 
     duty_role = models.CharField("Тип дежурства", max_length=32, choices=ScheduleDutyRole.choices, default=ScheduleDutyRole.LAB_STAFF_DUTY)
     disciplines = models.ManyToManyField("academics.Discipline", through="ScheduleEntryDisciplineSelection", related_name="schedule_entries", blank=True, verbose_name="Дисциплины")

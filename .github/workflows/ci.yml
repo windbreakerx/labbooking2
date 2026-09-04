@@ -40,7 +40,7 @@ jobs:
       - name: Migrate and test
         working-directory: backend
         env:
-          DJANGO_SETTINGS_MODULE: config.settings.dev
+          DJANGO_SETTINGS_MODULE: config.settings.test
           DATABASE_URL: postgres://labbooking:labbooking@localhost:5432/labbooking2
           SECRET_KEY: test-secret
           DEBUG: "1"

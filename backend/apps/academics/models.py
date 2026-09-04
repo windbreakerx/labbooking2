@@ -105,9 +105,7 @@ class Discipline(models.Model):
     dekanat_id = models.CharField("ID в Деканате", max_length=64, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, related_name="disciplines", verbose_name="Кафедра")
     semester = models.ForeignKey(Semester, on_delete=models.CASCADE, related_name="disciplines", null=True, blank=True)
-    # through=LabDisciplineBinding: аудит кто/когда/почему привязал (override требует reason).
-    # Заменяет голый M2M и legacy Discipline.training_centers — учебный центр дисциплины
-    # теперь выводится через laboratory.training_center.
+    # through=LabDisciplineBinding: аудит привязок; УЦ дисциплины выводится через laboratory.training_center.
     laboratories = models.ManyToManyField("scheduling.Laboratory", through="scheduling.LabDisciplineBinding", blank=True, related_name="disciplines", verbose_name="Лаборатории")
 
     class Meta:
@@ -144,7 +142,8 @@ class LabWork(models.Model):
 
     def __str__(self):
         titles = ", ".join(self.disciplines.values_list("title", flat=True)[:3])
-        return f"ЛР {self.number}: {self.title} ({titles})" if titles else f"ЛР {self.number}: {self.title}"
+        suffix = f" ({titles})" if titles else ""
+        return f"ЛР {self.number}: {self.title}{suffix}"
 
 
 class GroupLabWorkOverrideMode(models.TextChoices):
