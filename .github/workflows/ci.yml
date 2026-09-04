@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: labbooking2
+          POSTGRES_USER: labbooking
+          POSTGRES_PASSWORD: labbooking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U labbooking"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements-dev.txt
+
+      - name: Ruff
+        working-directory: backend
+        run: ruff check .
+
+      - name: Migrate and test
+        working-directory: backend
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.dev
+          DATABASE_URL: postgres://labbooking:labbooking@localhost:5432/labbooking2
+          SECRET_KEY: test-secret
+          DEBUG: "1"
+        run: |
+          python manage.py migrate --noinput
+          pytest
