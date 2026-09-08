@@ -76,6 +76,7 @@ class Room(models.Model):
     photo = models.ImageField("Фотография", upload_to="rooms/", blank=True)
     capacity = models.PositiveIntegerField("Вместимость", default=30)
     is_blocked = models.BooleanField("Заблокирована", default=False)
+    is_excluded_from_autogen = models.BooleanField("Исключена из автогенерации слотов", default=False)
     laboratory = models.ForeignKey(Laboratory, on_delete=models.SET_NULL, null=True, blank=True, related_name="rooms", verbose_name="Лаборатория")
     disciplines = models.ManyToManyField("academics.Discipline", blank=True, related_name="rooms", verbose_name="Дисциплины")
     default_lab_staff = models.ForeignKey(
@@ -115,6 +116,12 @@ class LabSession(models.Model):
         verbose_name_plural = "Слоты лабораторных"
         ordering = ["starts_at"]
         indexes = [models.Index(fields=["starts_at", "status"]), models.Index(fields=["lab_work", "starts_at"])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lab_work", "room", "semester", "starts_at"],
+                name="scheduling_labsession_unique_slot",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.lab_work} — {self.starts_at:%d.%m.%Y %H:%M}"

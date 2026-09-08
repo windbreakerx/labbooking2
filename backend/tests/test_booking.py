@@ -70,15 +70,19 @@ class TestBookingService:
 
     def test_one_booking_per_discipline(self, student, session, lab_work, room, semester):
         BookingService().create_booking(student, session.pk)
+        starts2 = session.starts_at + timezone.timedelta(days=7)
+        while timezone.localtime(starts2).weekday() >= 5:
+            starts2 += timezone.timedelta(days=1)
         session2 = LabSession.objects.create(
             lab_work=lab_work,
             room=room,
             semester=semester,
-            starts_at=session.starts_at,
-            ends_at=session.starts_at + timezone.timedelta(minutes=90),
+            starts_at=starts2,
+            ends_at=starts2 + timezone.timedelta(minutes=90),
             capacity=5,
             status=LabSessionStatus.OPEN,
         )
+        create_schedule_entry_for_session(session2)
         with pytest.raises(BookingError, match="активная запись"):
             BookingService().create_booking(student, session2.pk)
 

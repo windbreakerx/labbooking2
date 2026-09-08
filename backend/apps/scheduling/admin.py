@@ -44,8 +44,17 @@ class LabDisciplineBindingAdmin(admin.ModelAdmin):
 
 @admin.register(Room)
 class RoomAdmin(admin.ModelAdmin):
-    list_display = ("number", "name", "training_center", "laboratory", "default_lab_staff", "capacity", "is_blocked")
-    list_filter = ("training_center", "laboratory", "is_blocked")
+    list_display = (
+        "number",
+        "name",
+        "training_center",
+        "laboratory",
+        "default_lab_staff",
+        "capacity",
+        "is_blocked",
+        "is_excluded_from_autogen",
+    )
+    list_filter = ("training_center", "laboratory", "is_blocked", "is_excluded_from_autogen")
     filter_horizontal = ("disciplines",)
     autocomplete_fields = ("default_lab_staff",)
 

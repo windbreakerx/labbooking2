@@ -1,9 +1,9 @@
-"""Доступность слотов: окна записи, университетские пары, whitelist расписания,
-авто-«Посетил».
+"""Доступность слотов: окна записи, whitelist расписания, авто-«Посетил».
 
 Порт из v1 (971 строк) без каскадных опций визарда — те вернутся в День 6
-вместе со студенческим UI. Математика мест — seat_capacity.py, векторизованный
-каталог — session_catalog.py.
+вместе со студенческим UI. Сетка пар и чётность недель —
+scheduling/services/slot_grid.py; математика мест — seat_capacity.py,
+векторизованный каталог — session_catalog.py.
 """
 
 from collections.abc import Iterable
@@ -24,17 +24,12 @@ from apps.scheduling.models import (
     ScheduleEntryDisciplineSelection,
     WeekParity,
 )
-
-UNIVERSITY_PAIR_SLOTS = [
-    (1, time(8, 50), time(10, 20)),
-    (2, time(10, 35), time(12, 5)),
-    (3, time(12, 35), time(14, 5)),
-    (4, time(14, 15), time(15, 45)),
-    (5, time(15, 55), time(17, 20)),
-    (6, time(17, 30), time(19, 0)),
-]
-BOOKING_START_GRID_MINUTES = 15
-
+from apps.scheduling.services.slot_grid import (
+    BOOKING_START_GRID_MINUTES,
+    UNIVERSITY_PAIR_SLOTS,
+    academic_week_parity,
+    time_to_minutes,
+)
 
 # --- Автопроставление VISITED -------------------------------------------------
 
@@ -191,18 +186,10 @@ def manual_booking_max_date(now: datetime | None = None, *, holiday_dates: set |
 # --- Университетские пары ------------------------------------------------------
 
 
-def _minutes_between(start: time, end: time) -> int:
-    return end.hour * 60 + end.minute - (start.hour * 60 + start.minute)
-
-
-def _time_to_minutes(value: time) -> int:
-    return value.hour * 60 + value.minute
-
-
 def _pair_slot_for_time(moment: time) -> tuple[int, time, time] | None:
     minute_value = moment.hour * 60 + moment.minute
     for number, pair_start, pair_end in UNIVERSITY_PAIR_SLOTS:
-        if _time_to_minutes(pair_start) <= minute_value < _time_to_minutes(pair_end):
+        if time_to_minutes(pair_start) <= minute_value < time_to_minutes(pair_end):
             return number, pair_start, pair_end
     return None
 
@@ -215,7 +202,7 @@ def is_pair_time_for_booking(session_dt: datetime) -> bool:
     if not slot:
         return False
     _, pair_start, _ = slot
-    offset = _time_to_minutes(starts_at) - _time_to_minutes(pair_start)
+    offset = time_to_minutes(starts_at) - time_to_minutes(pair_start)
     return offset >= 0 and offset % BOOKING_START_GRID_MINUTES == 0
 
 
@@ -264,11 +251,6 @@ def is_session_in_manual_booking_window(
 # --- Whitelist расписания -------------------------------------------------------
 
 
-def _session_parity(starts_at: datetime) -> str:
-    week_is_odd = timezone.localtime(starts_at).date().isocalendar().week % 2 == 1
-    return WeekParity.ODD if week_is_odd else WeekParity.EVEN
-
-
 def _entry_lab_work_ids(entry: ScheduleEntry) -> set[int]:
     """ЛР слота: явные выборки по дисциплинам; пустая выборка = все ЛР дисциплины."""
     ids: set[int] = set()
@@ -286,15 +268,18 @@ def _entry_matches_session(entry: ScheduleEntry, session: LabSession) -> bool:
     local_end = timezone.localtime(session.ends_at)
     if entry.weekday != local_start.weekday():
         return False
-    if entry.week_parity != WeekParity.BOTH and entry.week_parity != _session_parity(session.starts_at):
+    if (
+        entry.week_parity != WeekParity.BOTH
+        and entry.week_parity != academic_week_parity(local_start.date())
+    ):
         return False
     if session.lab_work_id not in _entry_lab_work_ids(entry):
         return False
-    entry_start_minutes = _time_to_minutes(entry.start_time)
+    entry_start_minutes = time_to_minutes(entry.start_time)
     entry_end_minutes = entry_start_minutes + entry.duration_minutes
-    if _time_to_minutes(local_start.time()) < entry_start_minutes:
+    if time_to_minutes(local_start.time()) < entry_start_minutes:
         return False
-    return _time_to_minutes(local_end.time()) <= entry_end_minutes
+    return time_to_minutes(local_end.time()) <= entry_end_minutes
 
 
 def _student_group_label(student) -> str:
