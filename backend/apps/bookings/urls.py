@@ -1,8 +1,22 @@
 from django.urls import path
 
-from apps.bookings.views import support
+from apps.bookings.views import student, support
 
 urlpatterns = [
+    path("disciplines/", student.DisciplinesView.as_view(), name="disciplines"),
+    path("disciplines/<int:pk>/lab-works/", student.LabWorksView.as_view(), name="lab-works"),
+    path("lab-works/<int:pk>/book/", student.BookWizardView.as_view(), name="book-lab-work"),
+    path(
+        "lab-works/<int:pk>/book/<int:session_id>/",
+        student.BookConfirmView.as_view(),
+        name="book-session",
+    ),
+    path("my-bookings/", student.MyBookingsView.as_view(), name="my-bookings"),
+    path(
+        "my-bookings/<int:pk>/cancel/",
+        student.CancelBookingView.as_view(),
+        name="cancel-booking",
+    ),
     path("support/", support.SupportListView.as_view(), name="support"),
     path("support/create/", support.SupportCreateView.as_view(), name="support-create"),
     path("support/<int:pk>/", support.SupportChatView.as_view(), name="support-detail"),

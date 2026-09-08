@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Мои записи{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Мои записи</h1>
+  <a class="button" href="{% url 'disciplines' %}">Записаться на лабораторную</a>
+</div>
+
+<h2>Предстоящие</h2>
+{% if upcoming %}
+  <div class="ticket-rows">
+    {% for booking in upcoming %}
+      <div class="ticket-row">
+        <span class="ticket-row__main">
+          <strong>{{ booking.lab_work.title }}</strong>
+          <span class="muted">{{ booking.discipline.title }} · {{ booking.scheduled_at|date:"D d.m.Y, H:i" }} · {{ booking.room }}</span>
+        </span>
+        <span class="ticket-row__side">
+          <span class="badge badge--{{ booking.current_status|lower }}">{{ booking.get_current_status_display }}</span>
+          <form method="post" action="{% url 'cancel-booking' booking.pk %}"
+                onsubmit="return confirm('Отменить запись на «{{ booking.lab_work.title|escapejs }}»?');">
+            {% csrf_token %}
+            <button class="button button--danger button--sm" type="submit">Отменить</button>
+          </form>
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <strong>Предстоящих записей нет</strong>
+    Выберите лабораторную работу в каталоге дисциплин.
+  </div>
+{% endif %}
+
+<h2>История</h2>
+{% if history %}
+  <div class="ticket-rows">
+    {% for booking in history %}
+      <div class="ticket-row ticket-row--history">
+        <span class="ticket-row__main">
+          <strong>{{ booking.lab_work.title }}</strong>
+          <span class="muted">{{ booking.discipline.title }} · {{ booking.scheduled_at|date:"d.m.Y, H:i" }} · {{ booking.room }}</span>
+        </span>
+        <span class="ticket-row__side">
+          <span class="badge badge--{{ booking.current_status|lower }}">{{ booking.get_current_status_display }}</span>
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="muted">История пока пуста.</p>
+{% endif %}
+{% endblock %}

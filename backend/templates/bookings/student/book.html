@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Запись — {{ lab_work.title }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <a class="button button--secondary button--sm" href="{% url 'disciplines' %}">← Каталог</a>
+  <h1>{{ lab_work.title }}</h1>
+  <span class="page-header__aside">ЛР {{ lab_work.number }} · {{ lab_work.duration_minutes }} мин</span>
+</div>
+{% if by_date %}
+  {% for date, slots in by_date %}
+    <section class="card">
+      <div class="card__header">
+        <h2 class="card__title">{{ date|date:"l, d E" }}</h2>
+      </div>
+      <div class="slot-grid">
+        {% for slot in slots %}
+          <a class="slot-card" href="{% url 'book-session' lab_work.pk slot.session.pk %}">
+            <strong class="slot-card__time">{{ slot.session.starts_at|date:"H:i" }}–{{ slot.session.ends_at|date:"H:i" }}</strong>
+            <span class="slot-card__meta muted">{{ slot.session.room }}</span>
+            <span class="badge badge--open">Свободно мест: {{ slot.available_seats }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+  {% endfor %}
+{% else %}
+  <div class="empty-state">
+    <strong>Открытых слотов нет</strong>
+    В окне записи нет свободных слотов этой работы — загляните позже или напишите в обращения.
+  </div>
+{% endif %}
+{% endblock %}

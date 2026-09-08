@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ discipline.title }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <a class="button button--secondary button--sm" href="{% url 'disciplines' %}">← Каталог</a>
+  <h1>{{ discipline.title }}</h1>
+</div>
+{% if rows %}
+  <div class="quick-links">
+    {% for row in rows %}
+      <a class="quick-link" href="{% url 'book-lab-work' row.lab_work.pk %}">
+        <span class="quick-link__title">ЛР {{ row.lab_work.number }}: {{ row.lab_work.title }}</span>
+        <span class="quick-link__note">
+          {{ row.lab_work.duration_minutes }} мин
+          {% if row.status == 'VISITED' %} · <span class="badge badge--visited">пройдена</span>
+          {% elif row.status == 'BOOKED' %} · <span class="badge badge--booked">вы записаны</span>
+          {% endif %}
+        </span>
+      </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <strong>Лабораторных работ нет</strong>
+    У дисциплины нет опубликованных лабораторных работ.
+  </div>
+{% endif %}
+{% endblock %}

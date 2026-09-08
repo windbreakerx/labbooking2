@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Каталог дисциплин{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Каталог дисциплин</h1>
+  <span class="page-header__aside">{{ group|default:"" }}</span>
+</div>
+{% if rows %}
+  <div class="quick-links">
+    {% for row in rows %}
+      <a class="quick-link" href="{% url 'lab-works' row.discipline.pk %}">
+        <span class="quick-link__title">{{ row.discipline.title }}</span>
+        <span class="quick-link__note">
+          Лабораторных работ: {{ row.lab_work_count }}
+          {% if row.discipline.department %} · {{ row.discipline.department }}{% endif %}
+        </span>
+      </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <strong>Дисциплины не назначены</strong>
+    В учебном плане вашей группы нет дисциплин с лабораторными работами.
+    Если это ошибка — напишите в <a href="{% url 'support' %}">обращения</a>.
+  </div>
+{% endif %}
+{% endblock %}

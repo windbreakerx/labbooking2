@@ -899,6 +899,67 @@ ul.messages {
   flex: none;
 }
 
+.ticket-row--history {
+  opacity: 0.75;
+}
+
+/* --- Студентческий wizard и записи (день 6) --- */
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+.slot-card {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+.slot-card:hover {
+  border-color: var(--color-primary);
+  text-decoration: none;
+  box-shadow: var(--shadow-sm);
+}
+.slot-card__time {
+  font-size: var(--text-md);
+  color: var(--color-primary);
+}
+.slot-card__meta {
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm-list {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+.confirm-list__row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+.confirm-list__row:last-child {
+  border-bottom: none;
+}
+
+.badge--booked { background: var(--color-info-soft); color: var(--color-info); }
+.badge--no_show { background: var(--color-danger-soft); color: var(--color-danger); }
+.badge--cancelled,
+.badge--slot_cancelled { background: var(--color-surface-muted); color: var(--color-muted); }
+.badge--reaccess { background: var(--color-warning-soft); color: var(--color-warning); }
+.badge--visited { background: var(--color-success-soft); color: var(--color-success); }
+
 /* --- Утилиты --- */
 
 .muted {

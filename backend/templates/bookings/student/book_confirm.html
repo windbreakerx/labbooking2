@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Подтверждение записи{% endblock %}
+{% block content %}
+<div class="page-header">
+  <a class="button button--secondary button--sm" href="{% url 'book-lab-work' lab_work.pk %}">← К слотам</a>
+  <h1>Подтверждение записи</h1>
+</div>
+<div class="card card--narrow">
+  <div class="confirm-list">
+    <div class="confirm-list__row"><span class="muted">Лабораторная работа</span><strong>ЛР {{ lab_work.number }}: {{ lab_work.title }}</strong></div>
+    <div class="confirm-list__row"><span class="muted">Дата</span><strong>{{ session.starts_at|date:"l, d E" }}</strong></div>
+    <div class="confirm-list__row"><span class="muted">Время</span><strong>{{ session.starts_at|date:"H:i" }}–{{ session.ends_at|date:"H:i" }}</strong></div>
+    <div class="confirm-list__row"><span class="muted">Аудитория</span><strong>{{ session.room }}</strong></div>
+    <div class="confirm-list__row"><span class="muted">Свободных мест</span><strong>{{ slot.available_seats }}</strong></div>
+  </div>
+  <form method="post" action="{% url 'book-session' lab_work.pk session.pk %}">
+    {% csrf_token %}
+    <div class="form-actions">
+      <button class="button" type="submit">Записаться</button>
+      <a class="button button--secondary" href="{% url 'book-lab-work' lab_work.pk %}">Назад</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -14,7 +14,9 @@
           <a class="nav__link{% if 'lab-head' in request.path %} nav__link--current{% endif %}" href="{% url 'lab-head-home' %}">Кабинет завлаба</a>
         {% endif %}
         {% if is_student %}
-          <a class="nav__link{% if '/support/' in request.path %} nav__link--current{% endif %}" href="{% url 'support' %}">Обращения</a>
+          <a class="nav__link{% if '/disciplines' in request.path or '/lab-works' in request.path %} nav__link--current{% endif %}" href="{% url 'disciplines' %}">Каталог</a>
+          <a class="nav__link{% if '/my-bookings' in request.path %} nav__link--current{% endif %}" href="{% url 'my-bookings' %}">Мои записи</a>
+          <a class="nav__link{% if '/support/' in request.path and 'staff' not in request.path %} nav__link--current{% endif %}" href="{% url 'support' %}">Обращения</a>
         {% elif is_staff %}
           <a class="nav__link{% if 'staff/support' in request.path %} nav__link--current{% endif %}" href="{% url 'staff-support' %}">Обращения</a>
         {% endif %}

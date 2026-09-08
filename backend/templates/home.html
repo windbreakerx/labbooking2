@@ -17,10 +17,14 @@
     <span class="quick-link__note">Чат с сотрудниками лаборатории — ответы и статусы в реальном времени</span>
   </a>
   {% if is_student %}
-    <div class="quick-link">
+    <a class="quick-link" href="{% url 'disciplines' %}">
       <span class="quick-link__title">Запись на лабораторные</span>
-      <span class="quick-link__note">Каталог дисциплин и мои записи — раздел скоро откроется</span>
-    </div>
+      <span class="quick-link__note">Каталог дисциплин группы, свободные слоты и подтверждение записи</span>
+    </a>
+    <a class="quick-link" href="{% url 'my-bookings' %}">
+      <span class="quick-link__title">Мои записи</span>
+      <span class="quick-link__note">Предстоящие лабораторные и история с отменой</span>
+    </a>
   {% else %}
     <div class="quick-link">
       <span class="quick-link__title">Работа с записями</span>
