@@ -17,7 +17,7 @@ class BindingError(Exception):
     pass
 
 
-def _faculty_matches(laboratory: Laboratory, discipline: Discipline) -> bool:
+def faculty_matches(laboratory: Laboratory, discipline: Discipline) -> bool:
     """Дисциплина «своей» лаборатории: факультеты совпадают и оба заданы."""
     if not laboratory.faculty_id or not discipline.department_id:
         return False
@@ -34,7 +34,7 @@ def can_bind(user: User, laboratory: Laboratory, discipline: Discipline) -> bool
         return True
     if user.role != UserRole.LAB_HEAD:
         return False
-    return _faculty_matches(laboratory, discipline)
+    return faculty_matches(laboratory, discipline)
 
 
 def bindable_disciplines_qs(user: User, laboratory: Laboratory):
@@ -65,7 +65,7 @@ def bind(
             )
         if not (reason or "").strip():
             raise BindingError("Для несоответствующей привязки укажите причину.")
-    elif not _faculty_matches(laboratory, discipline):
+    elif not faculty_matches(laboratory, discipline):
         raise BindingError(
             "Дисциплина относится к другому факультету. Такая привязка доступна только "
             "системному администратору с указанием причины."

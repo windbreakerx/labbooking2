@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Кабинет завлаба{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Кабинет завлаба</h1>
+</div>
+{% if laboratory %}
+  <div class="card">
+    <div class="card__header">
+      <h2 class="card__title">{{ laboratory.name }}</h2>
+      {% if laboratory.faculty %}<span class="badge">{{ laboratory.faculty }}</span>{% endif %}
+      <span class="badge badge--muted">{{ laboratory.training_center }}</span>
+    </div>
+    <p class="muted">Привязано дисциплин: {{ bindings_count }}</p>
+    <div class="cluster">
+      <a class="button" href="{% url 'lab-head-bindings' %}">Привязки дисциплин</a>
+      <span class="badge badge--muted">Расписание — в разработке</span>
+      <span class="badge badge--muted">Люди и аудитории — в разработке</span>
+    </div>
+  </div>
+{% elif is_sys_admin %}
+  <div class="empty-state">
+    <strong>Выберите лабораторию</strong>
+    Селектор в шапке страницы открывает кабинет любой лаборатории.
+  </div>
+{% else %}
+  <div class="empty-state">
+    <strong>Лаборатория не назначена</strong>
+    Попросите системного администратора привязать ваш профиль к лаборатории.
+  </div>
+{% endif %}
+{% endblock %}

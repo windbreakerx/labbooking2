@@ -1,0 +1,25 @@
+{% load static %}<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Лабораторные{% endblock %} — Горный университет</title>
+  <link rel="icon" href="{% static 'img/spmi-logo.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/main.css' %}?v=20260908">
+  <script src="{% static 'js/htmx.min.js' %}" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">К содержимому</a>
+  {% block header %}{% include "includes/header.html" %}{% endblock %}
+  <main id="main-content" class="container page-shell">
+    {% if messages %}
+      <ul class="messages">
+        {% for message in messages %}
+          <li class="message message--{{ message.tags|default:'info' }}">{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

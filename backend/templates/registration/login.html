@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<div class="login-shell">
+  <div class="card card--narrow login-card">
+    <div class="login-card__brand">
+      <img src="{% static 'img/spmi-logo.svg' %}" alt="Горный университет">
+      <strong>Запись на лабораторные</strong>
+      <span class="muted">Корпоративный email и пароль</span>
+    </div>
+    {% for error in form.non_field_errors %}
+      <p class="message message--error">{{ error }}</p>
+    {% endfor %}
+    <form method="post" action="{% url 'login' %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="form-grid">
+        <div>
+          <label for="{{ form.username.id_for_label }}">{{ form.username.label }}</label>
+          {{ form.username }}
+          {% for error in form.username.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+        <div>
+          <label for="{{ form.password.id_for_label }}">{{ form.password.label }}</label>
+          {{ form.password }}
+          {% for error in form.password.errors %}<span class="field-error">{{ error }}</span>{% endfor %}
+        </div>
+        <div class="form-actions">
+          <button class="button" type="submit">Войти</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

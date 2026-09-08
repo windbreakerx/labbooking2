@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Главная{% endblock %}
+{% block content %}
+<div class="hero">
+  <p class="hero__eyebrow">Личный кабинет</p>
+  <h1>Здравствуйте, {{ user.greeting_name }}</h1>
+</div>
+<div class="quick-links">
+  {% if is_portal_manager %}
+    <a class="quick-link" href="{% url 'lab-head-home' %}">
+      <span class="quick-link__title">Кабинет завлаба</span>
+      <span class="quick-link__note">Привязки дисциплин, расписание и аудитории лаборатории</span>
+    </a>
+  {% endif %}
+  {% if is_student %}
+    <div class="quick-link">
+      <span class="quick-link__title">Запись на лабораторные</span>
+      <span class="quick-link__note">Каталог дисциплин и мои записи — раздел скоро откроется</span>
+    </div>
+  {% else %}
+    <div class="quick-link">
+      <span class="quick-link__title">Работа с записями</span>
+      <span class="quick-link__note">Записи студентов и обращения — раздел скоро откроется</span>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

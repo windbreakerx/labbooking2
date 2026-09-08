@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Привязки дисциплин{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Привязки дисциплин</h1>
+  <span class="page-header__aside">{{ laboratory.name }}{% if laboratory.faculty %} · {{ laboratory.faculty.title }}{% endif %}</span>
+</div>
+
+<div class="card">
+  <div class="card__header">
+    <h2 class="card__title">Привязанные дисциплины</h2>
+  </div>
+  {% if bindings %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Дисциплина</th>
+            <th>Кафедра</th>
+            <th>Привязал</th>
+            <th>Когда</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for binding in bindings %}
+            <tr>
+              <td>
+                {{ binding.discipline.title }}
+                {% if binding.is_override %}
+                  <span class="badge badge--warning">несоответствующая</span>
+                  {% if binding.reason %}<div class="binding-row__meta">Причина: {{ binding.reason }}</div>{% endif %}
+                {% endif %}
+              </td>
+              <td>{{ binding.discipline.department|default:"—" }}</td>
+              <td>{{ binding.bound_by.header_name|default:"—" }}</td>
+              <td>{{ binding.created_at|date:"d.m.Y H:i" }}</td>
+              <td>
+                <form method="post" action="{% url 'lab-head-discipline-unbind' binding.discipline.pk %}"
+                      onsubmit="return confirm('Отвязать дисциплину «{{ binding.discipline.title|escapejs }}»?');">
+                  {% csrf_token %}
+                  <button class="button button--danger button--sm" type="submit">Отвязать</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <strong>Дисциплины не привязаны</strong>
+      Выберите дисциплину для привязки ниже.
+    </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card__header">
+    <h2 class="card__title">Привязать дисциплину</h2>
+  </div>
+  <form method="get" action="{% url 'lab-head-bindings' %}" class="cluster" role="search">
+    <input type="search" name="q" value="{{ query }}" placeholder="Поиск дисциплины" aria-label="Поиск дисциплины">
+    <button class="button button--secondary" type="submit">Найти</button>
+  </form>
+  <p class="field-hint">
+    {% if is_sys_admin %}
+      Дисциплины чужих факультетов привязываются как «несоответствующая привязка» — отметьте чекбокс и укажите причину.
+    {% else %}
+      Список отфильтрован по факультету лаборатории.
+    {% endif %}
+  </p>
+  {% if bindable_disciplines %}
+    {% for row in bindable_disciplines %}
+      <div class="binding-row">
+        <div class="binding-row__main">
+          <div class="binding-row__title">{{ row.discipline.title }}</div>
+          <div class="binding-row__meta">
+            {{ row.discipline.department|default:"без кафедры" }}
+            {% if row.discipline.department.faculty %} · {{ row.discipline.department.faculty.title }}{% endif %}
+          </div>
+        </div>
+        <div class="binding-row__actions">
+          {% if row.needs_override %}
+            <form class="binding-override" method="post" action="{% url 'lab-head-discipline-bind' row.discipline.pk %}">
+              {% csrf_token %}
+              <label><input type="checkbox" name="override"> несоответствующая</label>
+              <input type="text" name="reason" placeholder="Причина (обязательна)" aria-label="Причина несоответствующей привязки">
+              <button class="button button--sm" type="submit">Привязать</button>
+            </form>
+          {% else %}
+            <form method="post" action="{% url 'lab-head-discipline-bind' row.discipline.pk %}">
+              {% csrf_token %}
+              <button class="button button--sm" type="submit">Привязать</button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="empty-state">
+      <strong>Ничего не найдено</strong>
+      Все доступные дисциплины уже привязаны или не подходят под поиск.
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% load static %}
+<header class="header">
+  <div class="container header__inner">
+    <a class="brand" href="{% url 'home' %}">
+      <img class="brand__logo" src="{% static 'img/spmi-logo.svg' %}" alt="">
+      <span class="brand__text">
+        Лабораторные
+        <small>Горный университет</small>
+      </span>
+    </a>
+    {% if user.is_authenticated %}
+      <nav class="nav" aria-label="Основная навигация">
+        {% if can_manage_catalog %}
+          <a class="nav__link{% if 'lab-head' in request.path %} nav__link--current{% endif %}" href="{% url 'lab-head-home' %}">Кабинет завлаба</a>
+        {% endif %}
+      </nav>
+      <div class="header__side">
+        {% if is_sys_admin %}
+          <form class="lab-selector" method="post" action="{% url 'lab-head-select-lab' %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <span class="lab-selector__label">Лаборатория</span>
+            <select name="laboratory" aria-label="Лаборатория">
+              {% for lab in admin_laboratories %}
+                <option value="{{ lab.pk }}"{% if request.session.admin_lab_id == lab.pk %} selected{% endif %}>{{ lab }}</option>
+              {% endfor %}
+            </select>
+            <button class="button button--sm" type="submit">ОК</button>
+          </form>
+        {% endif %}
+        <span class="user-chip"><span class="user-chip__name">{{ user.header_name }}</span></span>
+        <form method="post" action="{% url 'logout' %}">
+          {% csrf_token %}
+          <button class="button button--secondary button--sm" type="submit">Выйти</button>
+        </form>
+      </div>
+    {% endif %}
+  </div>
+</header>
