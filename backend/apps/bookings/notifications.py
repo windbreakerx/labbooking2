@@ -69,3 +69,37 @@ def notify_booking_event(booking: Booking, event: str) -> None:
         event,
         title,
     )
+
+
+def waitlist_notification_payload(entry, event: str) -> tuple[str, str]:
+    """(Заголовок, текст) уведомления участнику очереди на слот."""
+    session = entry.lab_session
+    local = timezone.localtime(session.starts_at)
+    slot = f"{local:%d.%m.%Y} в {local:%H:%M}"
+    work = session.lab_work.title
+    room = session.room.number
+    templates = {
+        "dropped": (
+            "Вы выбыли из очереди",
+            f"Место освободилось на «{work}» ({slot}, ауд. №{room}), но записаться не удалось: "
+            "действуют правила записи. Выберите другой слот.",
+        ),
+        "session_cancelled": (
+            "Слот отменён — очередь сброшена",
+            f"Слот «{work}» ({slot}, ауд. №{room}) отменён, очередь на него сброшена. "
+            "Запишитесь на другой слот.",
+        ),
+    }
+    return templates.get(event, ("Уведомление", ""))
+
+
+def notify_waitlist_event(entry, event: str) -> None:
+    """Хук событий очереди (выбытие, сброс при отмене слота)."""
+    title, body = waitlist_notification_payload(entry, event)
+    logger.info(
+        "waitlist notify: entry=%s student=%s event=%s — %s",
+        entry.pk,
+        entry.student_id,
+        event,
+        title,
+    )

@@ -1,36 +1,30 @@
-"""Ядро записи: создание, отмена, статусы, waitlist, неявки.
+"""Ядро записи: создание (студент/ручное), окна записи, локи, лимиты.
 
-Все изменения статусов идут через ``_record_status`` (история + sticky-факты),
-отмены — только через выделенные методы (cancel_source остаётся консистентным).
-Посещаемость и авто-«Посетил» — в services/attendance.py.
+Отмены и смены статусов — BookingMutationsMixin (booking_mutations.py);
+очередь — waitlist.py; счётчики неявок — attendance.py.
 """
 
-import functools
 import logging
-import time
 
 from django.conf import settings
 from django.db import transaction
-from django.db.utils import OperationalError
 from django.utils import timezone
 
 from apps.academics.models import Discipline
 from apps.academics.scope import student_can_access_lab_work, student_disciplines_qs
 from apps.bookings.models import (
-    NO_SHOW_EXPLANATION_THRESHOLD,
     AuditLog,
     Booking,
     BookingStatus,
     BookingStatusHistory,
-    CancelSource,
     RegistrationType,
-    StudentLabAttendance,
-    WaitlistEntry,
 )
 from apps.bookings.notifications import notify_booking_event
+from apps.bookings.services.booking_mutations import BookingMutationsMixin
+from apps.bookings.services.errors import BookingError
+from apps.bookings.services.retry import retry_on_deadlock
 from apps.bookings.services.session_availability import (
     booking_date_window,
-    booking_window_config,
     is_before_restriction_deadline,
     is_day_open_for_booking,
     is_manual_session_time_allowed,
@@ -40,71 +34,16 @@ from apps.bookings.services.session_availability import (
     room_capacity_would_be_exceeded,
     session_matches_schedule_whitelist,
 )
-from apps.scheduling.models import Holiday, Laboratory, LabSession, LabSessionStatus
+from apps.scheduling.models import Holiday, LabSession, LabSessionStatus
 from apps.users.models import User, UserRole
 from apps.users.roles import staff_can_modify_bookings
 
 logger = logging.getLogger(__name__)
 
-DEADLOCK_MAX_ATTEMPTS = 3
-DEADLOCK_RETRY_BASE_SECONDS = 0.05
-STAFF_NOTE_MAX_LENGTH = 500
-
-STATUSES_WITHOUT_STAFF_NOTE = frozenset({BookingStatus.NO_SHOW, BookingStatus.REACCESS})
 ACTIVE_STATUSES = {BookingStatus.BOOKED}
 
-# Переходы change_status; отмены идут через выделенные методы.
-STATUS_TRANSITIONS: dict[str, set[str]] = {
-    BookingStatus.BOOKED: {BookingStatus.VISITED, BookingStatus.NO_SHOW, BookingStatus.REACCESS},
-    BookingStatus.NO_SHOW: {BookingStatus.REACCESS, BookingStatus.VISITED},
-}
-TERMINAL_STATUSES = {
-    BookingStatus.REACCESS,
-    BookingStatus.VISITED,
-    BookingStatus.CANCELLED,
-    BookingStatus.SLOT_CANCELLED,
-}
 
-
-class BookingError(Exception):
-    pass
-
-
-def _is_deadlock_error(exc: OperationalError) -> bool:
-    sqlstate = getattr(exc, "sqlstate", None)
-    if sqlstate == "40P01":
-        return True
-    cause = getattr(exc, "__cause__", None)
-    if getattr(cause, "pgcode", None) == "40P01" or getattr(cause, "sqlstate", None) == "40P01":
-        return True
-    return "deadlock detected" in str(exc).lower()
-
-
-def retry_on_deadlock(func):
-    """Повторить вызов при PostgreSQL deadlock (SQLSTATE 40P01)."""
-
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        for attempt in range(1, DEADLOCK_MAX_ATTEMPTS + 1):
-            try:
-                return func(*args, **kwargs)
-            except OperationalError as exc:
-                if not _is_deadlock_error(exc):
-                    raise
-                if attempt >= DEADLOCK_MAX_ATTEMPTS:
-                    raise BookingError(
-                        "Система обрабатывает параллельные записи. "
-                        "Повторите попытку через несколько секунд."
-                    ) from exc
-                logger.warning(
-                    "Deadlock in %s, retry %s/%s", func.__name__, attempt, DEADLOCK_MAX_ATTEMPTS
-                )
-                time.sleep(DEADLOCK_RETRY_BASE_SECONDS * attempt)
-
-    return wrapper
-
-
-class BookingService:
+class BookingService(BookingMutationsMixin):
     def __init__(self, actor: User | None = None, ip_address: str | None = None):
         self.actor = actor
         self.ip_address = ip_address
@@ -119,22 +58,6 @@ class BookingService:
             ip_address=self.ip_address,
             payload=payload or {},
         )
-
-    def _require_staff_note(self, status: str, note: str) -> str:
-        cleaned = (note or "").strip()
-        if not (
-            self.actor
-            and self.actor.role != UserRole.STUDENT
-            and staff_can_modify_bookings(self.actor)
-        ):
-            return cleaned
-        if status in STATUSES_WITHOUT_STAFF_NOTE:
-            return cleaned
-        if not cleaned:
-            raise BookingError("Укажите причину изменения статуса.")
-        if len(cleaned) > STAFF_NOTE_MAX_LENGTH:
-            raise BookingError(f"Комментарий не должен превышать {STAFF_NOTE_MAX_LENGTH} символов.")
-        return cleaned
 
     def _notify(self, booking: Booking, event: str):
         notify_booking_event(booking, event)
@@ -266,70 +189,6 @@ class BookingService:
     def _lock_for_booking(self, session: LabSession):
         self._lock_session_rows(self._collect_booking_lock_ids(session))
 
-    def _validate_cancel_window(self, booking: Booking, by_staff: bool = False):
-        if by_staff:
-            return
-        cancel_hours = booking_window_config(booking.room.laboratory_id)["cancel_hours"]
-        deadline = booking.scheduled_at - timezone.timedelta(hours=cancel_hours)
-        if timezone.now() > deadline:
-            raise BookingError(f"Отмена возможна не позднее чем за {cancel_hours} часа до начала.")
-
-    # --- Неявки (учёт в рамках change_status) ---------------------------------
-
-    def _resolve_booking_laboratory(self, booking: Booking) -> Laboratory | None:
-        """Лаборатория для учёта посещаемости: аудитория, иначе ЛР/дисциплина."""
-        if booking.room.laboratory_id:
-            # По id: select_related(room__laboratory) под FOR UPDATE нельзя
-            # (nullable FK → LEFT JOIN → ошибка PostgreSQL).
-            return Laboratory.objects.filter(pk=booking.room.laboratory_id).first()
-        if booking.lab_work_id:
-            lab = booking.lab_work.laboratories.order_by("name").first()
-            if lab:
-                return lab
-        if booking.discipline_id:
-            return booking.discipline.laboratories.order_by("name").first()
-        return None
-
-    def _get_or_create_lab_attendance(self, student: User, laboratory: Laboratory) -> StudentLabAttendance:
-        attendance = (
-            StudentLabAttendance.objects.select_for_update()
-            .filter(student=student, laboratory=laboratory)
-            .first()
-        )
-        if attendance is not None:
-            return attendance
-        attendance, _ = StudentLabAttendance.objects.get_or_create(
-            student=student, laboratory=laboratory
-        )
-        return StudentLabAttendance.objects.select_for_update().get(pk=attendance.pk)
-
-    def _adjust_no_show_count(self, student: User, laboratory: Laboratory | None, delta: int) -> bool:
-        """Счётчик неявок по лаборатории + флаг объяснительной.
-
-        Returns True, если флаг «объяснительная» только что стал обязательным.
-        """
-        if delta == 0 or laboratory is None:
-            return False
-        attendance = self._get_or_create_lab_attendance(student, laboratory)
-        new_count = max(0, attendance.no_show_count + delta)
-        update_fields = ["no_show_count", "updated_at"]
-        attendance.no_show_count = new_count
-        explanation_just_required = False
-        if new_count >= NO_SHOW_EXPLANATION_THRESHOLD and not attendance.explanation_required:
-            attendance.explanation_required = True
-            update_fields.append("explanation_required")
-            explanation_just_required = True
-        elif new_count < NO_SHOW_EXPLANATION_THRESHOLD and attendance.explanation_required:
-            attendance.explanation_required = False
-            update_fields.append("explanation_required")
-        attendance.save(update_fields=update_fields)
-        return explanation_just_required
-
-    def has_had_no_show_for_lab_work(self, student: User, lab_work_id: int) -> bool:
-        return Booking.objects.filter(
-            student=student, lab_work_id=lab_work_id, had_no_show=True
-        ).exists()
-
     # --- Создание записи -------------------------------------------------------
 
     def _check_discipline_limit(self, student: User, discipline_id: int, lab_work_id: int):
@@ -455,11 +314,16 @@ class BookingService:
         return booking
 
     def _validate_manual_booking_rules(self, student: User, session: LabSession):
-        """Ручная запись: лимиты игнорируются, стенд и пересечения — предупреждения."""
+        """Ручная запись: лимиты игнорируются, стенд — жёстко, остальное — предупреждения."""
         if session.is_stand_blocked_by_other_lab_work():
             raise BookingError("Стенд уже занят на это время. Выберите другой интервал.")
         if self._student_overlap_bookings(student, session).exists():
             self.booking_warnings.append(self._overlap_warning_message(student, session))
+        booked_count = session.bookings.filter(current_status=BookingStatus.BOOKED).count()
+        if booked_count >= session.capacity:
+            self.booking_warnings.append(
+                f"Слот заполнен ({booked_count}/{session.capacity}) — запись сверх лимита."
+            )
 
     def _enforce_capacity_limits(self, session: LabSession):
         booked_count = session.bookings.filter(current_status=BookingStatus.BOOKED).count()
@@ -476,144 +340,3 @@ class BookingService:
             )
         if session.is_stand_blocked_by_other_lab_work():
             raise BookingError("Стенд уже занят на это время. Выберите другой интервал.")
-
-    # --- Отмены и статусы ------------------------------------------------------
-
-    @transaction.atomic
-    def cancel_booking(self, booking: Booking, by_staff: bool = False, note: str = "") -> Booking:
-        booking = Booking.objects.select_for_update().get(pk=booking.pk)
-        if booking.current_status != BookingStatus.BOOKED:
-            raise BookingError("Можно отменить только активную запись.")
-        self._validate_cancel_window(booking, by_staff=by_staff)
-        source = CancelSource.STAFF if by_staff else CancelSource.STUDENT
-        if by_staff:
-            status_note = self._require_staff_note(BookingStatus.CANCELLED, note)
-        else:
-            status_note = (note or "").strip() or "Отмена студентом"
-        self._record_status(booking, BookingStatus.CANCELLED, status_note, cancel_source=source)
-        self._log_audit("booking.cancel", "Booking", booking.pk, {"cancel_source": source})
-        self._notify(booking, "cancelled")
-        self._promote_waitlist(booking.lab_session)
-        return booking
-
-    @transaction.atomic
-    def mark_slot_cancelled(self, booking: Booking, note: str = "") -> Booking:
-        """BOOKED → SLOT_CANCELLED (отмена слота расписанием/лабораторией)."""
-        booking = (
-            Booking.objects.select_for_update(of=("self",))
-            .select_related("room", "lab_work", "discipline", "student", "lab_session")
-            .get(pk=booking.pk)
-        )
-        if booking.current_status != BookingStatus.BOOKED:
-            raise BookingError("Отменить слот можно только для активной записи.")
-        status_note = self._require_staff_note(BookingStatus.SLOT_CANCELLED, note) or "Слот отменён"
-        self._record_status(booking, BookingStatus.SLOT_CANCELLED, status_note)
-        self._log_audit(
-            "booking.slot_cancelled", "Booking", booking.pk, {"status": BookingStatus.SLOT_CANCELLED}
-        )
-        self._notify(booking, "slot_cancelled")
-        self._promote_waitlist(booking.lab_session)
-        return booking
-
-    @transaction.atomic
-    def change_status(self, booking: Booking, new_status: str, note: str = "") -> Booking:
-        if self.actor and not staff_can_modify_bookings(self.actor):
-            raise BookingError("Недостаточно прав для изменения статуса записи.")
-        # of=("self",): PostgreSQL запрещает FOR UPDATE на nullable outer joins.
-        booking = (
-            Booking.objects.select_for_update(of=("self",))
-            .select_related("room", "lab_work", "discipline", "student")
-            .get(pk=booking.pk)
-        )
-        if new_status == booking.current_status:
-            return booking
-        if booking.current_status in TERMINAL_STATUSES:
-            raise BookingError(
-                f"Статус «{booking.get_current_status_display()}» конечный и не может быть изменён."
-            )
-        # Отмены человеком — только через cancel_booking (он ставит cancel_source).
-        if new_status == BookingStatus.CANCELLED:
-            if booking.current_status != BookingStatus.BOOKED:
-                raise BookingError("Отменить можно только активную запись.")
-            return self.cancel_booking(booking, by_staff=True, note=note)
-        if new_status == BookingStatus.SLOT_CANCELLED:
-            if booking.current_status != BookingStatus.BOOKED:
-                raise BookingError("Отменить слот можно только для активной записи.")
-            return self.mark_slot_cancelled(booking, note=note)
-        if new_status not in STATUS_TRANSITIONS.get(booking.current_status, set()):
-            raise BookingError(f"Переход {booking.current_status} → {new_status} недопустим.")
-
-        status_note = self._require_staff_note(new_status, note)
-        laboratory = self._resolve_booking_laboratory(booking)
-        correcting_no_show = (
-            new_status == BookingStatus.VISITED
-            and booking.current_status == BookingStatus.NO_SHOW
-            and booking.had_no_show
-        )
-        explanation_just_required = False
-        if new_status == BookingStatus.NO_SHOW and not booking.had_no_show:
-            explanation_just_required = self._adjust_no_show_count(booking.student, laboratory, 1)
-        elif correcting_no_show:
-            self._adjust_no_show_count(booking.student, laboratory, -1)
-
-        self._record_status(booking, new_status, status_note, clear_no_show_fact=correcting_no_show)
-        self._log_audit("booking.status_change", "Booking", booking.pk, {"status": new_status})
-        notify_map = {
-            BookingStatus.NO_SHOW: "no_show",
-            BookingStatus.REACCESS: "reaccess",
-            BookingStatus.VISITED: "visited",
-        }
-        if new_status in notify_map:
-            self._notify(booking, notify_map[new_status])
-        if explanation_just_required:
-            self._notify(booking, "explanation_required")
-        return booking
-
-    # --- Waitlist и массовые операции ------------------------------------------
-
-    def _promote_waitlist(self, session: LabSession):
-        entry = (
-            WaitlistEntry.objects.filter(lab_session=session)
-            .order_by("position")
-            .select_related("student")
-            .first()
-        )
-        if not entry:
-            return
-        try:
-            self.create_booking(entry.student, session.pk)
-            entry.delete()
-        except BookingError:
-            entry.delete()
-
-    @transaction.atomic
-    def join_waitlist(self, student: User, session_id: int) -> WaitlistEntry:
-        session = LabSession.objects.select_for_update(of=("self",)).get(pk=session_id)
-        if student.role == UserRole.STUDENT and not student_can_access_lab_work(
-            student, session.lab_work_id
-        ):
-            raise BookingError("Лабораторная работа недоступна для вашей группы.")
-        if session.bookings.filter(current_status=BookingStatus.BOOKED).count() < session.capacity:
-            raise BookingError("В слоте есть свободные места — запишитесь напрямую.")
-        if WaitlistEntry.objects.filter(lab_session=session, student=student).exists():
-            raise BookingError("Вы уже в очереди на этот слот.")
-        position = WaitlistEntry.objects.filter(lab_session=session).count() + 1
-        entry = WaitlistEntry.objects.create(
-            lab_session=session, student=student, position=position
-        )
-        self._log_audit("waitlist.join", "WaitlistEntry", entry.pk)
-        return entry
-
-    @transaction.atomic
-    def cancel_session_bookings(self, session: LabSession, note: str = "") -> int:
-        """Отмена слота: активные записи → SLOT_CANCELLED (без REACCESS)."""
-        session.status = LabSessionStatus.CANCELLED
-        session.save(update_fields=["status"])
-        count = 0
-        for booking in session.bookings.filter(current_status=BookingStatus.BOOKED):
-            self.mark_slot_cancelled(booking, note=note or "Изменение расписания")
-            count += 1
-        self._log_audit(
-            "session.cancel", "LabSession", session.pk, {"slot_cancelled_count": count}
-        )
-        return count

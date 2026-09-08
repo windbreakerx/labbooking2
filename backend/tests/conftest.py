@@ -91,6 +91,24 @@ def far_open_weekday_pair(min_days_ahead: int = 20, hour: int = 10, minute: int 
     return next_open_weekday_pair(days_ahead=min_days_ahead, hour=hour, minute=minute)
 
 
+def assign_student_group(user, student_group):
+    UserProfile.objects.update_or_create(user=user, defaults={"student_group": student_group})
+    return user
+
+
+def make_student(email, student_group):
+    return assign_student_group(
+        User.objects.create_user(
+            email=email,
+            password="pass",
+            first_name=email[0].upper(),
+            last_name=email.split("@")[0].title(),
+            role=UserRole.STUDENT,
+        ),
+        student_group,
+    )
+
+
 def seed_manual_booking(*, actor, student, session):
     """Запись для scope/UI-тестов без прохождения правил ручной записи."""
     from apps.bookings.models import Booking, BookingStatus, RegistrationType

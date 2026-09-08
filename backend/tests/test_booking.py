@@ -15,7 +15,7 @@ from apps.bookings.models import (
     CancelSource,
     StudentLabAttendance,
 )
-from apps.bookings.services import BookingError, BookingService
+from apps.bookings.services import BookingError, BookingService, join_waitlist
 from apps.bookings.services.attendance import (
     clear_explanation_required,
     mark_visited_for_ended_sessions,
@@ -45,26 +45,9 @@ from .conftest import (
     attach_schedule_entry_lab_works,
     create_lab_work,
     create_schedule_entry_for_session,
+    make_student,
     next_open_weekday_pair,
 )
-
-
-def _assign_student_group(user, student_group):
-    UserProfile.objects.update_or_create(user=user, defaults={"student_group": student_group})
-    return user
-
-
-def _make_student(email, student_group):
-    return _assign_student_group(
-        User.objects.create_user(
-            email=email,
-            password="pass",
-            first_name=email[0].upper(),
-            last_name=email.split("@")[0].title(),
-            role=UserRole.STUDENT,
-        ),
-        student_group,
-    )
 
 
 @pytest.mark.django_db
@@ -74,8 +57,8 @@ class TestBookingService:
         assert booking.current_status == BookingStatus.BOOKED
 
     def test_capacity_limit(self, student, session, student_group):
-        other = _make_student("o@stud.spmi.ru", student_group)
-        third = _make_student("t@stud.spmi.ru", student_group)
+        other = make_student("o@stud.spmi.ru", student_group)
+        third = make_student("t@stud.spmi.ru", student_group)
         BookingService().create_booking(student, session.pk)
         BookingService().create_booking(other, session.pk)
         with pytest.raises(BookingError, match="Нет свободных мест"):
@@ -111,6 +94,18 @@ class TestBookingService:
         )
         booking = BookingService(actor=staff).create_booking(student, session2.pk, manual=True)
         assert booking.registration_type == "MANUAL"
+
+    def test_manual_booking_over_capacity_warns(self, student, session, staff, student_group):
+        session.capacity = 1
+        session.save(update_fields=["capacity"])
+        BookingService(actor=student).create_booking(student, session.pk)
+
+        other = make_student("overbook@stud.spmi.ru", student_group)
+        service = BookingService(actor=staff)
+        booking = service.create_booking(other, session.pk, manual=True)
+
+        assert booking.registration_type == "MANUAL"
+        assert any("сверх лимита" in warning for warning in service.booking_warnings)
 
     def test_cancel_within_deadline(self, student, session):
         service = BookingService(actor=student)
@@ -414,16 +409,17 @@ class TestBookingService:
         ).exists()
 
     def test_staff_cancelled_via_status_promotes_waitlist(
-        self, student, session, staff, student_group
+        self, student, session, staff, student_group, django_capture_on_commit_callbacks
     ):
-        other = _make_student("waiter@stud.spmi.ru", student_group)
+        other = make_student("waiter@stud.spmi.ru", student_group)
         session.capacity = 1
         session.save(update_fields=["capacity"])
         booking = BookingService(actor=student).create_booking(student, session.pk)
-        BookingService(actor=other).join_waitlist(other, session.pk)
-        BookingService(actor=staff).change_status(
-            booking, BookingStatus.CANCELLED, note="Освобождение места"
-        )
+        join_waitlist(other, session.pk)
+        with django_capture_on_commit_callbacks(execute=True):
+            BookingService(actor=staff).change_status(
+                booking, BookingStatus.CANCELLED, note="Освобождение места"
+            )
         booking.refresh_from_db()
         assert booking.current_status == BookingStatus.CANCELLED
         assert other.bookings.filter(
@@ -440,8 +436,8 @@ class TestBookingService:
     def test_room_parallel_capacity_limit(
         self, student, session, discipline, room, semester, student_group
     ):
-        other_student = _make_student("s2@stud.spmi.ru", student_group)
-        third_student = _make_student("s3@stud.spmi.ru", student_group)
+        other_student = make_student("s2@stud.spmi.ru", student_group)
+        third_student = make_student("s3@stud.spmi.ru", student_group)
         second_lab_work = create_lab_work(
             discipline, number=2, title="ЛР 2", duration_minutes=90, is_published=True
         )
@@ -470,9 +466,9 @@ class TestBookingService:
         session.lab_work.capacity = 3
         session.lab_work.save(update_fields=["capacity"])
 
-        second_student = _make_student("same-lab-2@stud.spmi.ru", student_group)
-        third_student = _make_student("same-lab-3@stud.spmi.ru", student_group)
-        fourth_student = _make_student("same-lab-4@stud.spmi.ru", student_group)
+        second_student = make_student("same-lab-2@stud.spmi.ru", student_group)
+        third_student = make_student("same-lab-3@stud.spmi.ru", student_group)
+        fourth_student = make_student("same-lab-4@stud.spmi.ru", student_group)
 
         overlap = LabSession.objects.create(
             lab_work=session.lab_work,
@@ -539,7 +535,7 @@ class TestBookingService:
             return original_create(self, *args, **kwargs)
 
         monkeypatch.setattr(BookingService, "_create_booking_in_transaction", flaky_create)
-        monkeypatch.setattr("apps.bookings.services.booking.time.sleep", lambda *_args: None)
+        monkeypatch.setattr("apps.bookings.services.retry.time.sleep", lambda *_args: None)
 
         booking = BookingService(actor=student).create_booking(student, session.pk)
         assert booking.pk
@@ -579,7 +575,7 @@ class TestBookingService:
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(second_session, lab_work=second_lab)
-        other_student = _make_student("stand-conflict@stud.spmi.ru", student_group)
+        other_student = make_student("stand-conflict@stud.spmi.ru", student_group)
 
         BookingService().create_booking(student, session.pk)
         with pytest.raises(BookingError, match="Стенд уже занят"):
@@ -599,8 +595,8 @@ class TestBookingService:
         session.capacity = 3
         session.save(update_fields=["capacity"])
 
-        second_student = _make_student("stand-group@stud.spmi.ru", student_group)
-        third_student = _make_student("stand-group2@stud.spmi.ru", student_group)
+        second_student = make_student("stand-group@stud.spmi.ru", student_group)
+        third_student = make_student("stand-group2@stud.spmi.ru", student_group)
 
         BookingService().create_booking(student, session.pk)
         BookingService().create_booking(second_student, session.pk)
