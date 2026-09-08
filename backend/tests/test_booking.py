@@ -21,13 +21,13 @@ from apps.bookings.services.attendance import (
     mark_visited_for_ended_sessions,
 )
 from apps.bookings.services.session_availability import (
-    bookable_sessions_qs,
     booking_date_window,
     is_before_restriction_deadline,
     is_day_open_for_booking,
     is_pair_time_for_booking,
     is_ready_for_auto_visited,
 )
+from apps.bookings.services.session_catalog import student_bookable_slots
 from apps.scheduling.models import (
     AutoVisitedMode,
     Laboratory,
@@ -48,6 +48,10 @@ from .conftest import (
     make_student,
     next_open_weekday_pair,
 )
+
+
+def catalog_sessions(lab_work_id, *, student=None):
+    return [slot.session for slot in student_bookable_slots(lab_work_id, student=student)]
 
 
 @pytest.mark.django_db
@@ -651,9 +655,9 @@ class TestBookingService:
 @pytest.mark.django_db
 class TestSessionAvailability:
     def test_horizon_excludes_far_sessions(self, session, far_session, lab_work):
-        qs = bookable_sessions_qs(lab_work_id=lab_work.pk)
-        assert session in qs
-        assert far_session not in qs
+        sessions = catalog_sessions(lab_work.pk)
+        assert session in sessions
+        assert far_session not in sessions
 
     def test_bookable_sessions_follow_schedule_whitelist(self, lab_work, room, semester):
         starts = next_open_weekday_pair(days_ahead=3, hour=10, minute=35)
@@ -666,8 +670,8 @@ class TestSessionAvailability:
             capacity=2,
             status=LabSessionStatus.OPEN,
         )
-        qs = bookable_sessions_qs(lab_work_id=lab_work.pk)
-        assert blocked_session not in qs
+        sessions = catalog_sessions(lab_work.pk)
+        assert blocked_session not in sessions
 
         entry = ScheduleEntry.objects.create(
             room=room,
@@ -681,8 +685,8 @@ class TestSessionAvailability:
             is_active=True,
         )
         attach_schedule_entry_lab_works(entry, lab_work)
-        qs = bookable_sessions_qs(lab_work_id=lab_work.pk)
-        assert blocked_session in qs
+        sessions = catalog_sessions(lab_work.pk)
+        assert blocked_session in sessions
 
     def test_schedule_whitelist_allows_offset_start_within_entry_window(
         self, lab_work, room, semester
@@ -710,8 +714,8 @@ class TestSessionAvailability:
         )
         attach_schedule_entry_lab_works(entry, lab_work)
 
-        qs = bookable_sessions_qs(lab_work_id=lab_work.pk)
-        assert offset_session in qs
+        sessions = catalog_sessions(lab_work.pk)
+        assert offset_session in sessions
 
     def test_empty_selection_means_all_lab_works_of_discipline(self, lab_work, room, semester):
         """Пустая выборка ЛР в слоте расписания = разрешены все ЛР дисциплины."""
@@ -741,8 +745,8 @@ class TestSessionAvailability:
             schedule_entry=entry, discipline=lab_work.disciplines.first()
         )  # без lab_works
 
-        qs = bookable_sessions_qs(lab_work_id=lab_work.pk)
-        assert sess in qs
+        sessions = catalog_sessions(lab_work.pk)
+        assert sess in sessions
 
     def test_teacher_load_group_restricts_student_visibility(
         self, student, lab_work, room, semester
@@ -782,10 +786,10 @@ class TestSessionAvailability:
         )
         UserProfile.objects.create(user=outsider, student_group=foreign_group)
 
-        student_qs = bookable_sessions_qs(lab_work_id=lab_work.pk, student=student)
-        outsider_qs = bookable_sessions_qs(lab_work_id=lab_work.pk, student=outsider)
-        assert restricted_session in student_qs
-        assert restricted_session not in outsider_qs
+        student_sessions = catalog_sessions(lab_work.pk, student=student)
+        outsider_sessions = catalog_sessions(lab_work.pk, student=outsider)
+        assert restricted_session in student_sessions
+        assert restricted_session not in outsider_sessions
 
     def test_booking_window_does_not_shift_by_time_of_day(self):
         tz = timezone.get_current_timezone()
@@ -1002,11 +1006,11 @@ class TestSessionAvailability:
         create_schedule_entry_for_session(s1, lab_work=lab_work)
         create_schedule_entry_for_session(s4, lab_work=lab_work)
 
-        qs = bookable_sessions_qs(lab_work_id=lab_work.pk)
-        assert s1 in qs
-        assert s2 not in qs
-        assert s3 not in qs
-        assert s4 in qs
+        sessions = catalog_sessions(lab_work.pk)
+        assert s1 in sessions
+        assert s2 not in sessions
+        assert s3 not in sessions
+        assert s4 in sessions
 
     def test_offset_interval_inside_pair_is_bookable(self):
         offset_start = next_open_weekday_pair(days_ahead=3, hour=11, minute=35)
@@ -1044,6 +1048,6 @@ class TestSessionAvailability:
         )
         create_schedule_entry_for_session(overlap, lab_work=second_lab)
         create_schedule_entry_for_session(free_slot, lab_work=second_lab)
-        qs = bookable_sessions_qs(lab_work_id=second_lab.pk, student=student)
-        assert overlap not in qs
-        assert free_slot in qs
+        sessions = catalog_sessions(second_lab.pk, student=student)
+        assert overlap not in sessions
+        assert free_slot in sessions

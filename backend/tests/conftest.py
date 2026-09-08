@@ -37,7 +37,7 @@ def attach_schedule_entry_lab_works(entry: ScheduleEntry, *lab_works) -> None:
 
 
 def create_schedule_entry_for_session(session, *, lab_work=None, **overrides) -> ScheduleEntry:
-    """Активная запись расписания, разрешающая слот в whitelist bookable_sessions_qs."""
+    """Активная запись расписания, разрешающая слот в whitelist каталога."""
     lab_work = lab_work or session.lab_work
     local_start = timezone.localtime(session.starts_at)
     duration_minutes = overrides.pop(
@@ -64,6 +64,10 @@ def _disable_day_open_gate(monkeypatch):
     """Тесты ставят сессии в пределах 3 недель — горизонт 14 дней не должен им мешать."""
     monkeypatch.setattr(
         "apps.bookings.services.session_availability.is_day_open_for_booking",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        "apps.bookings.services.session_catalog.is_day_open_for_booking",
         lambda *_args, **_kwargs: True,
     )
     monkeypatch.setattr(

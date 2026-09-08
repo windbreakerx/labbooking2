@@ -127,8 +127,8 @@ class LabSession(models.Model):
 
     @property
     def available_seats(self) -> int:
-        """Свободные места с учётом лимитов аудитории/ЛР/стенда (SessionAvailabilityService)."""
-        from apps.bookings.services.session_availability import session_available_seats
+        """Свободные места с учётом лимитов аудитории/ЛР/стенда (seat_capacity)."""
+        from apps.bookings.services.seat_capacity import session_available_seats
 
         return session_available_seats(self)
 

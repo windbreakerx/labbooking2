@@ -1,15 +1,17 @@
-"""Доступность слотов: окна записи, университетские пары, лимиты мест,
-whitelist расписания, авто-«Посетил».
+"""Доступность слотов: окна записи, университетские пары, whitelist расписания,
+авто-«Посетил».
 
 Порт из v1 (971 строк) без каскадных опций визарда — те вернутся в День 6
-вместе со студенческим UI.
+вместе со студенческим UI. Математика мест — seat_capacity.py, векторизованный
+каталог — session_catalog.py.
 """
 
+from collections.abc import Iterable
 from datetime import datetime, time, timedelta
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import Prefetch, QuerySet
+from django.db.models import Prefetch
 from django.utils import timezone
 
 from apps.scheduling.models import (
@@ -17,7 +19,6 @@ from apps.scheduling.models import (
     Holiday,
     LaboratoryBookingSettings,
     LabSession,
-    LabSessionStatus,
     ScheduleDutyRole,
     ScheduleEntry,
     ScheduleEntryDisciplineSelection,
@@ -71,19 +72,16 @@ def is_ready_for_auto_visited(
 # --- Окно записи ---------------------------------------------------------------
 
 
-def booking_window_config(laboratory_id: int | None = None) -> dict:
-    """Глобальные настройки окна записи с переопределениями конкретной лаборатории."""
-    config = {
+def _default_window_config() -> dict:
+    return {
         "horizon_days": settings.BOOKING_HORIZON_DAYS,
         "cancel_hours": settings.BOOKING_CANCEL_HOURS,
         "restriction_base_time": time(9, 0),
         "restriction_hours_before_base": None,
     }
-    if not laboratory_id:
-        return config
-    lab_settings = LaboratoryBookingSettings.objects.filter(laboratory_id=laboratory_id).first()
-    if not lab_settings:
-        return config
+
+
+def _apply_lab_settings(config: dict, lab_settings: LaboratoryBookingSettings) -> dict:
     if lab_settings.booking_horizon_days is not None:
         config["horizon_days"] = lab_settings.booking_horizon_days
     if lab_settings.booking_cancel_hours is not None:
@@ -93,22 +91,60 @@ def booking_window_config(laboratory_id: int | None = None) -> dict:
     return config
 
 
-def booking_date_window(now: datetime | None = None, *, laboratory_id: int | None = None) -> tuple:
-    """Рабочее окно дат записи: всегда с завтрашнего дня и до горизонта N дней.
+def booking_window_config(laboratory_id: int | None = None) -> dict:
+    """Глобальные настройки окна записи с переопределениями конкретной лаборатории."""
+    if not laboratory_id:
+        return _default_window_config()
+    lab_settings = LaboratoryBookingSettings.objects.filter(laboratory_id=laboratory_id).first()
+    if not lab_settings:
+        return _default_window_config()
+    return _apply_lab_settings(_default_window_config(), lab_settings)
 
-    Закрытие записи на следующий день регулируется is_before_restriction_deadline.
-    """
+
+def booking_window_configs(laboratory_ids: Iterable[int | None]) -> dict[int | None, dict]:
+    """Конфиги окна записи для набора лабораторий одним запросом (None = глобальный)."""
+    ids = {laboratory_id for laboratory_id in laboratory_ids if laboratory_id is not None}
+    configs: dict[int | None, dict] = {None: _default_window_config()}
+    if not ids:
+        return configs
+    for lab_settings in LaboratoryBookingSettings.objects.filter(laboratory_id__in=ids):
+        configs[lab_settings.laboratory_id] = _apply_lab_settings(
+            _default_window_config(), lab_settings
+        )
+    for laboratory_id in ids - configs.keys():
+        configs[laboratory_id] = _default_window_config()
+    return configs
+
+
+def _window_dates(config: dict, now: datetime | None = None) -> tuple:
     local_now = timezone.localtime(now or timezone.now())
-    config = booking_window_config(laboratory_id)
     min_date = local_now.date() + timedelta(days=1)
     max_date = local_now.date() + timedelta(days=config["horizon_days"])
     return min_date, max_date
 
 
+def booking_date_window(
+    now: datetime | None = None,
+    *,
+    laboratory_id: int | None = None,
+    config: dict | None = None,
+) -> tuple:
+    """Рабочее окно дат записи: всегда с завтрашнего дня и до горизонта N дней.
+
+    Закрытие записи на следующий день регулируется is_before_restriction_deadline.
+    ``config`` — предвычисленный конфиг (booking_window_configs), без запроса.
+    """
+    return _window_dates(config or booking_window_config(laboratory_id), now)
+
+
 def is_day_open_for_booking(
-    session_date, now: datetime | None = None, *, laboratory_id: int | None = None
+    session_date,
+    now: datetime | None = None,
+    *,
+    laboratory_id: int | None = None,
+    config: dict | None = None,
 ) -> bool:
-    min_date, max_date = booking_date_window(now, laboratory_id=laboratory_id)
+    min_date, max_date = booking_date_window(now, laboratory_id=laboratory_id, config=config)
     return min_date <= session_date <= max_date
 
 
@@ -117,8 +153,9 @@ def is_before_restriction_deadline(
     now: datetime | None = None,
     *,
     laboratory_id: int | None = None,
+    config: dict | None = None,
 ) -> bool:
-    config = booking_window_config(laboratory_id)
+    config = config or booking_window_config(laboratory_id)
     restriction_hours = config["restriction_hours_before_base"]
     if restriction_hours is None:
         return True
@@ -131,11 +168,16 @@ def is_before_restriction_deadline(
     return local_now <= cutoff_dt
 
 
-def manual_booking_max_date(now: datetime | None = None):
-    """Последний календарный день в пределах N рабочих недель от сегодня."""
+def manual_booking_max_date(now: datetime | None = None, *, holiday_dates: set | None = None):
+    """Последний календарный день в пределах N рабочих недель от сегодня.
+
+    ``holiday_dates`` — предвычисленное множество праздников (один запрос
+    на страницу ручной записи вместо одного на вызов).
+    """
     local_now = timezone.localtime(now or timezone.now())
     target_working_days = settings.MANUAL_BOOKING_WORKING_WEEKS * 5
-    holiday_dates = set(Holiday.objects.values_list("date", flat=True))
+    if holiday_dates is None:
+        holiday_dates = set(Holiday.objects.values_list("date", flat=True))
 
     working_days = 0
     cursor = local_now.date()
@@ -265,214 +307,61 @@ def _student_group_label(student) -> str:
     return (profile.group_name or "").strip()
 
 
-def _filter_sessions_by_schedule_whitelist(qs: QuerySet[LabSession], *, student=None) -> QuerySet[LabSession]:
-    """Слот видим студенту, если совпадает с активной записью расписания.
+class ScheduleWhitelistIndex:
+    """Активные записи расписания для набора слотов — одним блоком запросов.
 
-    Слоты TEACHER_DUTY с группой по нагрузке видны только этой группе.
+    Слот видим, если совпадает с активной записью расписания (день недели,
+    чётность, время в пределах записи, ЛР среди разрешённых). Записи
+    TEACHER_DUTY с группой по нагрузке видны только этой группе.
     """
-    sessions = list(qs)
-    if not sessions:
-        return qs.none()
-    selections_qs = ScheduleEntryDisciplineSelection.objects.prefetch_related(
-        "lab_works", "discipline__lab_works"
-    )
-    schedule_entries = (
-        ScheduleEntry.objects.filter(
-            is_active=True,
-            room_id__in={session.room_id for session in sessions},
-            semester_id__in={session.semester_id for session in sessions},
-        )
-        .prefetch_related(Prefetch("discipline_selections", queryset=selections_qs))
-        .order_by("pk")
-    )
-    by_slot: dict[tuple[int, int, int], list[ScheduleEntry]] = {}
-    for entry in schedule_entries:
-        by_slot.setdefault((entry.room_id, entry.semester_id, entry.weekday), []).append(entry)
 
-    group_label = _student_group_label(student) if student is not None else ""
-    session_ids: list[int] = []
-    for session in sessions:
+    def __init__(self, sessions: Iterable[LabSession]):
+        self._by_slot: dict[tuple[int, int, int], list[ScheduleEntry]] = {}
+        sessions = list(sessions)
+        if not sessions:
+            return
+        selections_qs = ScheduleEntryDisciplineSelection.objects.select_related(
+            "discipline"
+        ).prefetch_related("lab_works", "discipline__lab_works")
+        entries = (
+            ScheduleEntry.objects.filter(
+                is_active=True,
+                room_id__in={session.room_id for session in sessions},
+                semester_id__in={session.semester_id for session in sessions},
+            )
+            .prefetch_related(Prefetch("discipline_selections", queryset=selections_qs))
+            .order_by("pk")
+        )
+        for entry in entries:
+            self._by_slot.setdefault(
+                (entry.room_id, entry.semester_id, entry.weekday), []
+            ).append(entry)
+
+    def allows(self, session: LabSession, *, student=None) -> bool:
         local_start = timezone.localtime(session.starts_at)
-        candidates = by_slot.get((session.room_id, session.semester_id, local_start.weekday()), [])
+        candidates = self._by_slot.get(
+            (session.room_id, session.semester_id, local_start.weekday()), []
+        )
         matched = [entry for entry in candidates if _entry_matches_session(entry, session)]
         if not matched:
-            continue
-        if student is not None:
-            unrestricted = [
-                entry
-                for entry in matched
-                if not (entry.duty_role == ScheduleDutyRole.TEACHER_DUTY and entry.load_group_label.strip())
-            ]
-            if unrestricted:
-                session_ids.append(session.pk)
-                continue
-            restricted_groups = {
-                entry.load_group_label.strip()
-                for entry in matched
-                if entry.duty_role == ScheduleDutyRole.TEACHER_DUTY
-            }
-            if group_label and group_label in restricted_groups:
-                session_ids.append(session.pk)
-            continue
-        session_ids.append(session.pk)
-
-    if not session_ids:
-        return qs.none()
-    return qs.filter(pk__in=session_ids).order_by("starts_at")
+            return False
+        if student is None:
+            return True
+        unrestricted = [
+            entry
+            for entry in matched
+            if not (entry.duty_role == ScheduleDutyRole.TEACHER_DUTY and entry.load_group_label.strip())
+        ]
+        if unrestricted:
+            return True
+        group_label = _student_group_label(student)
+        restricted_groups = {
+            entry.load_group_label.strip()
+            for entry in matched
+            if entry.duty_role == ScheduleDutyRole.TEACHER_DUTY
+        }
+        return bool(group_label) and group_label in restricted_groups
 
 
 def session_matches_schedule_whitelist(session: LabSession, *, student=None) -> bool:
-    return _filter_sessions_by_schedule_whitelist(
-        LabSession.objects.filter(pk=session.pk),
-        student=student,
-    ).exists()
-
-
-# --- Лимиты мест ---------------------------------------------------------------
-
-
-def _overlapping_booked_count(session: LabSession, **lookup) -> int:
-    from apps.bookings.models import Booking, BookingStatus
-
-    return Booking.objects.filter(
-        current_status=BookingStatus.BOOKED,
-        lab_session__starts_at__lt=session.ends_at,
-        lab_session__ends_at__gt=session.starts_at,
-        **lookup,
-    ).exclude(lab_session_id=session.pk).count()
-
-
-def room_bookings_on_other_sessions(session: LabSession) -> int:
-    return _overlapping_booked_count(session, lab_session__room_id=session.room_id)
-
-
-def lab_work_bookings_on_other_sessions(session: LabSession) -> int:
-    return _overlapping_booked_count(session, lab_session__lab_work_id=session.lab_work_id)
-
-
-def session_available_seats(session: LabSession) -> int:
-    from apps.bookings.models import BookingStatus
-
-    session_booked = session.bookings.filter(current_status=BookingStatus.BOOKED).count()
-    if session.is_stand_blocked_by_other_lab_work():
-        return 0
-
-    session_remaining = session.capacity - session_booked
-    same_lab_other_booked = lab_work_bookings_on_other_sessions(session)
-    lab_remaining = session.lab_work.capacity - same_lab_other_booked - session_booked
-
-    other_room_booked = room_bookings_on_other_sessions(session)
-    if other_room_booked == 0:
-        return max(0, min(session_remaining, lab_remaining))
-    room_remaining = session.room.capacity - other_room_booked - session_booked
-    return max(0, min(session_remaining, lab_remaining, room_remaining))
-
-
-def room_capacity_would_be_exceeded(session: LabSession, *, extra_bookings: int = 1) -> bool:
-    from apps.bookings.models import BookingStatus
-
-    other_booked = room_bookings_on_other_sessions(session)
-    if other_booked == 0:
-        return False
-    session_booked = session.bookings.filter(current_status=BookingStatus.BOOKED).count()
-    return other_booked + session_booked + extra_bookings > session.room.capacity
-
-
-def lab_work_capacity_would_be_exceeded(session: LabSession, *, extra_bookings: int = 1) -> bool:
-    from apps.bookings.models import BookingStatus
-
-    other_booked = lab_work_bookings_on_other_sessions(session)
-    session_booked = session.bookings.filter(current_status=BookingStatus.BOOKED).count()
-    return other_booked + session_booked + extra_bookings > session.lab_work.capacity
-
-
-# --- Кверисайты слотов ----------------------------------------------------------
-
-
-def _filter_sessions_with_free_seats(qs: QuerySet[LabSession]) -> QuerySet[LabSession]:
-    now = timezone.now()
-    session_ids = []
-    for session in qs:
-        local_date = timezone.localtime(session.starts_at).date()
-        laboratory_id = session.room.laboratory_id
-        if not is_pair_time_for_booking(session.starts_at):
-            continue
-        if not is_day_open_for_booking(local_date, now, laboratory_id=laboratory_id):
-            continue
-        if not is_before_restriction_deadline(session.starts_at, now, laboratory_id=laboratory_id):
-            continue
-        if session.available_seats <= 0:
-            continue
-        session_ids.append(session.pk)
-    if not session_ids:
-        return qs.none()
-    return qs.filter(pk__in=session_ids).order_by("starts_at")
-
-
-def bookable_sessions_qs(lab_work_id: int | None = None, *, student=None) -> QuerySet[LabSession]:
-    """Слоты, доступные студенту для записи: окно + праздники + места + whitelist + занятость."""
-    now = timezone.now()
-    min_date, max_date = booking_date_window(now)
-    holiday_dates = set(Holiday.objects.values_list("date", flat=True))
-
-    qs = (
-        LabSession.objects.filter(
-            status=LabSessionStatus.OPEN,
-            starts_at__gt=now,
-            starts_at__date__gte=min_date,
-            starts_at__date__lte=max_date,
-            room__is_blocked=False,
-        )
-        .select_related("lab_work", "room", "room__training_center", "room__laboratory")
-        .order_by("starts_at")
-    )
-    if lab_work_id:
-        qs = qs.filter(lab_work_id=lab_work_id)
-    if holiday_dates:
-        qs = qs.exclude(starts_at__date__in=holiday_dates)
-
-    qs = _filter_sessions_with_free_seats(qs)
-    qs = _filter_sessions_by_schedule_whitelist(qs, student=student)
-    if student is not None:
-        from apps.bookings.models import BookingStatus
-
-        busy_intervals = [
-            (booking.lab_session.starts_at, booking.lab_session.ends_at)
-            for booking in student.bookings.filter(current_status=BookingStatus.BOOKED)
-            .select_related("lab_session")
-        ]
-        if busy_intervals:
-            session_ids = [
-                session.pk
-                for session in qs
-                if not any(start < session.ends_at and end > session.starts_at for start, end in busy_intervals)
-            ]
-            qs = qs.filter(pk__in=session_ids) if session_ids else qs.none()
-    return qs
-
-
-def staff_manual_sessions_qs(lab_work_id: int) -> QuerySet[LabSession]:
-    """Слоты для ручной записи: с текущего момента до N рабочих недель,
-    без фильтра по свободным местам; пары и праздники учитываются."""
-    now = timezone.now()
-    max_date = manual_booking_max_date(now)
-    holiday_dates = set(Holiday.objects.values_list("date", flat=True))
-    qs = (
-        LabSession.objects.filter(
-            status=LabSessionStatus.OPEN,
-            ends_at__gt=now,
-            starts_at__date__lte=max_date,
-            lab_work_id=lab_work_id,
-            room__is_blocked=False,
-        )
-        .select_related("lab_work", "room", "room__training_center")
-        .order_by("starts_at")
-    )
-    session_ids = [
-        session.pk
-        for session in qs
-        if is_session_in_manual_booking_window(session, now, max_date=max_date, holiday_dates=holiday_dates)
-    ]
-    if not session_ids:
-        return qs.none()
-    return qs.filter(pk__in=session_ids)
+    return ScheduleWhitelistIndex([session]).allows(session, student=student)

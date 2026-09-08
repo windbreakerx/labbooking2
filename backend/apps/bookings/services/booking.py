@@ -23,15 +23,14 @@ from apps.bookings.notifications import notify_booking_event
 from apps.bookings.services.booking_mutations import BookingMutationsMixin
 from apps.bookings.services.errors import BookingError
 from apps.bookings.services.retry import retry_on_deadlock
+from apps.bookings.services.seat_capacity import seat_remainings, session_seat_counts
 from apps.bookings.services.session_availability import (
     booking_date_window,
     is_before_restriction_deadline,
     is_day_open_for_booking,
     is_manual_session_time_allowed,
     is_pair_time_for_booking,
-    lab_work_capacity_would_be_exceeded,
     manual_booking_max_date,
-    room_capacity_would_be_exceeded,
     session_matches_schedule_whitelist,
 )
 from apps.scheduling.models import Holiday, LabSession, LabSessionStatus
@@ -326,17 +325,25 @@ class BookingService(BookingMutationsMixin):
             )
 
     def _enforce_capacity_limits(self, session: LabSession):
-        booked_count = session.bookings.filter(current_status=BookingStatus.BOOKED).count()
-        if booked_count >= session.capacity:
+        session_booked, lab_other, room_other, stand_blocked = session_seat_counts(session)
+        session_remaining, lab_remaining, room_remaining = seat_remainings(
+            session_capacity=session.capacity,
+            session_booked=session_booked,
+            lab_work_capacity=session.lab_work.capacity,
+            lab_other_booked=lab_other,
+            room_capacity=session.room.capacity,
+            room_other_booked=room_other,
+        )
+        if session_remaining <= 0:
             raise BookingError("Нет свободных мест.")
-        if lab_work_capacity_would_be_exceeded(session):
+        if lab_remaining <= 0:
             raise BookingError(
                 "Лимит мест для этой лабораторной работы исчерпан на выбранный интервал. "
                 "Выберите другую пару."
             )
-        if room_capacity_would_be_exceeded(session):
+        if room_remaining is not None and room_remaining <= 0:
             raise BookingError(
                 f"Аудитория {session.room.number} заполнена на это время. Выберите другую пару."
             )
-        if session.is_stand_blocked_by_other_lab_work():
+        if stand_blocked:
             raise BookingError("Стенд уже занят на это время. Выберите другой интервал.")
