@@ -6,12 +6,16 @@
   <h1>Здравствуйте, {{ user.greeting_name }}</h1>
 </div>
 <div class="quick-links">
-  {% if is_portal_manager %}
+  {% if can_manage_catalog %}
     <a class="quick-link" href="{% url 'lab-head-home' %}">
       <span class="quick-link__title">Кабинет завлаба</span>
       <span class="quick-link__note">Привязки дисциплин, расписание и аудитории лаборатории</span>
     </a>
   {% endif %}
+  <a class="quick-link" href="{% if is_student %}{% url 'support' %}{% else %}{% url 'staff-support' %}{% endif %}">
+    <span class="quick-link__title">Обращения</span>
+    <span class="quick-link__note">Чат с сотрудниками лаборатории — ответы и статусы в реальном времени</span>
+  </a>
   {% if is_student %}
     <div class="quick-link">
       <span class="quick-link__title">Запись на лабораторные</span>
@@ -20,7 +24,7 @@
   {% else %}
     <div class="quick-link">
       <span class="quick-link__title">Работа с записями</span>
-      <span class="quick-link__note">Записи студентов и обращения — раздел скоро откроется</span>
+      <span class="quick-link__note">Записи студентов — раздел скоро откроется</span>
     </div>
   {% endif %}
 </div>

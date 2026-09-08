@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Мои обращения{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Мои обращения</h1>
+  <a class="button" href="{% url 'support-create' %}">Новое обращение</a>
+</div>
+{% if rows %}
+  <div class="ticket-rows">
+    {% for row in rows %}
+      <a class="ticket-row" href="{% url 'support-detail' row.ticket.pk %}">
+        <span class="ticket-row__main">
+          <strong>{{ row.ticket.subject }}</strong>
+          <span class="muted">{{ row.last.body|default:row.ticket.body|truncatechars:90 }}</span>
+        </span>
+        <span class="ticket-row__side">
+          <span class="badge badge--{{ row.ticket.status|lower }}">{{ row.ticket.get_status_display }}</span>
+          <time class="muted">{{ row.last.created_at|default:row.ticket.created_at|date:"d.m H:i" }}</time>
+        </span>
+      </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="empty-state">
+    <strong>Обращений пока нет</strong>
+    Задайте вопрос сотрудникам лаборатории — ответ появится здесь.
+  </div>
+{% endif %}
+{% endblock %}

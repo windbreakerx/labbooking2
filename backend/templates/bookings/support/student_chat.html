@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ ticket.subject }}{% endblock %}
+{% block extra_js %}<script src="{% static 'js/messenger.js' %}" defer></script>{% endblock %}
+{% block content %}
+<div class="page-header">
+  <a class="button button--secondary button--sm" href="{% url 'support' %}">← Обращения</a>
+  <h1>{{ ticket.subject }}</h1>
+  <span class="page-header__aside">
+    <span class="badge badge--{{ ticket.status|lower }}">{{ ticket.get_status_display }}</span>
+    · {{ ticket.training_center|default:"" }} · создано {{ ticket.created_at|date:"d.m H:i" }}
+  </span>
+</div>
+<div class="chat chat--page">
+  <div class="chat__messages" id="chat-messages"
+       hx-get="{% url 'support-messages' ticket.pk %}" hx-trigger="every 4s" hx-swap="innerHTML">
+    {% include "bookings/support/_messages.html" %}
+  </div>
+  <form class="composer" hx-post="{% url 'support-reply' ticket.pk %}"
+        hx-target="#chat-messages" hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) this.reset()">
+    {% csrf_token %}
+    <textarea name="body" rows="1" required placeholder="Сообщение…" data-enter-submit></textarea>
+    <button class="button" type="submit">Отправить</button>
+  </form>
+</div>
+{% endblock %}

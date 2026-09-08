@@ -1,0 +1,14 @@
+{% if error %}<div class="chat__error" role="alert">{{ error }}</div>{% endif %}
+{% for item in chat_items %}
+  {% if item.kind == "day" %}
+    <div class="chat__day" role="separator"><span>{{ item.created_at|date:"d.m.Y" }}</span></div>
+  {% else %}
+    <div class="bubble{% if item.author.pk == request.user.pk %} bubble--own{% endif %}">
+      {% if item.author.pk != request.user.pk %}
+        <div class="bubble__author">{{ item.author.header_name }}</div>
+      {% endif %}
+      <div class="bubble__body">{{ item.body }}</div>
+      <time class="bubble__time" datetime="{{ item.created_at|date:'c' }}">{{ item.created_at|date:"H:i" }}</time>
+    </div>
+  {% endif %}
+{% endfor %}

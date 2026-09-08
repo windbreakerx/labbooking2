@@ -152,6 +152,7 @@ class SupportTicket(models.Model):
     subject = models.CharField(max_length=256)
     body = models.TextField()
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
+    staff_read_at = models.DateTimeField("Прочитано сотрудником", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

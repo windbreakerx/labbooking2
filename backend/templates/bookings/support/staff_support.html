@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Обращения — сотрудник{% endblock %}
+{% block extra_js %}<script src="{% static 'js/messenger.js' %}" defer></script>{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Обращения</h1>
+  <span class="page-header__aside">студенты вашего учебного центра</span>
+</div>
+<div class="messenger" id="messenger">
+  <aside class="messenger__list" id="thread-list"
+         hx-get="{% url 'staff-support-threads' %}" hx-trigger="every 4s" hx-swap="innerHTML"
+         hx-include="#active-ticket">
+    {% include "bookings/support/_thread_list.html" %}
+  </aside>
+  <section class="messenger__chat" id="chat-pane">
+    {% if ticket %}{% include "bookings/support/_chat.html" %}{% else %}
+      <div class="chat-placeholder empty-state">
+        <strong>Выберите обращение</strong>
+        Список тредов слева, новые сообщения подтягиваются каждые 4 секунды.
+      </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

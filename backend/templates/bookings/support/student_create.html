@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Новое обращение{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Новое обращение</h1>
+</div>
+<div class="card card--narrow">
+  <form method="post" action="{% url 'support-create' %}" class="form-grid">
+    {% csrf_token %}
+    <div>
+      <label for="{{ form.subject.id_for_label }}">{{ form.subject.label }}</label>
+      {{ form.subject }}
+      {% for e in form.subject.errors %}<span class="field-error">{{ e }}</span>{% endfor %}
+    </div>
+    <div>
+      <label for="{{ form.training_center.id_for_label }}">{{ form.training_center.label }}</label>
+      {{ form.training_center }}
+      {% for e in form.training_center.errors %}<span class="field-error">{{ e }}</span>{% endfor %}
+    </div>
+    <div>
+      <label for="{{ form.body.id_for_label }}">{{ form.body.label }}</label>
+      {{ form.body }}
+      {% for e in form.body.errors %}<span class="field-error">{{ e }}</span>{% endfor %}
+    </div>
+    <div class="form-actions">
+      <button class="button" type="submit">Отправить</button>
+      <a class="button button--secondary" href="{% url 'support' %}">Отмена</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

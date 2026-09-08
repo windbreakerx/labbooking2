@@ -1,0 +1,34 @@
+<input type="hidden" id="active-ticket" name="active" value="{{ ticket.pk }}">
+<div class="chat">
+  <header class="chat__header">
+    <button class="chat__back" type="button" data-chat-back aria-label="К списку обращений">← Обращения</button>
+    <div class="chat__who">
+      <strong>{{ ticket.student.header_name }}</strong>
+      <span class="muted">{{ ticket.subject }} · {{ ticket.training_center|default:"без УЦ" }}</span>
+    </div>
+    <div class="chat__actions">
+      <span class="badge badge--{{ ticket.status|lower }}">{{ ticket.get_status_display }}</span>
+      {% if ticket_overdue %}<span class="badge badge--warning">просрочено</span>{% endif %}
+      <form hx-post="{% url 'staff-support-status' ticket.pk %}" hx-target="#chat-pane" hx-swap="innerHTML">
+        {% csrf_token %}
+        <select name="status" aria-label="Сменить статус" onchange="this.form.requestSubmit()">
+          <option value="">Статус…</option>
+          <option value="IN_PROGRESS">В работе</option>
+          <option value="RESOLVED">Отвечено</option>
+          <option value="CLOSED">Закрыть</option>
+        </select>
+      </form>
+    </div>
+  </header>
+  <div class="chat__messages" id="chat-messages"
+       hx-get="{% url 'staff-support-messages' ticket.pk %}" hx-trigger="every 4s" hx-swap="innerHTML">
+    {% include "bookings/support/_messages.html" %}
+  </div>
+  <form class="composer" hx-post="{% url 'staff-support-reply' ticket.pk %}"
+        hx-target="#chat-messages" hx-swap="innerHTML"
+        hx-on::after-request="if(event.detail.successful) this.reset()">
+    {% csrf_token %}
+    <textarea name="body" rows="1" required placeholder="Ответ студенту…" data-enter-submit></textarea>
+    <button class="button" type="submit">Отправить</button>
+  </form>
+</div>

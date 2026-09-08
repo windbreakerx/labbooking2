@@ -9,8 +9,6 @@ from django.contrib.auth.views import LoginView, LogoutView
 from django.views.generic import TemplateView
 
 from apps.users.forms import EmailAuthenticationForm
-from apps.users.models import UserRole
-from apps.users.roles import staff_can_manage_catalog
 
 
 class WebLoginView(LoginView):
@@ -24,11 +22,6 @@ class WebLogoutView(LogoutView):
 
 
 class HomeView(LoginRequiredMixin, TemplateView):
-    template_name = "home.html"
+    """Плитки главной: флаги ролей приходят из context processor ``users.ui``."""
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        user = self.request.user
-        context["is_student"] = user.role == UserRole.STUDENT
-        context["is_portal_manager"] = staff_can_manage_catalog(user)
-        return context
+    template_name = "home.html"

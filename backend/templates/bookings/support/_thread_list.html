@@ -1,0 +1,28 @@
+{% for row in rows %}
+  {% with t=row.ticket %}
+    <a class="thread-item{% if t.pk == active_ticket_id %} thread-item--current{% endif %}"
+       href="{% url 'staff-support' %}?ticket={{ t.pk }}"
+       hx-get="{% url 'staff-support-chat' t.pk %}" hx-target="#chat-pane" hx-swap="innerHTML">
+      <span class="avatar" aria-hidden="true">{{ t.student.first_name|slice:":1" }}{{ t.student.last_name|slice:":1" }}</span>
+      <span class="thread-item__main">
+        <span class="thread-item__top">
+          <strong class="thread-item__name">{{ t.student.header_name }}</strong>
+          <time class="thread-item__time">{{ row.last.created_at|default:t.created_at|date:"d.m H:i" }}</time>
+        </span>
+        <span class="thread-item__preview">
+          {% if row.last and row.last.author_id == request.user.pk %}<span class="muted">Вы:</span> {% endif %}
+          {{ t.subject }} — {{ row.last.body|default:t.body|truncatechars:60 }}
+        </span>
+      </span>
+      <span class="thread-item__badges">
+        {% if row.unread %}<span class="dot-unread" title="Есть непрочитанное"></span>{% endif %}
+        {% if row.overdue %}<span class="badge badge--warning">просрочено</span>{% endif %}
+      </span>
+    </a>
+  {% endwith %}
+{% empty %}
+  <div class="empty-state thread-list__empty">
+    <strong>Обращений нет</strong>
+    Новые обращения студентов появятся здесь автоматически.
+  </div>
+{% endfor %}

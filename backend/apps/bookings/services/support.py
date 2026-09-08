@@ -114,3 +114,11 @@ def staff_set_status(ticket, staff, status: str) -> SupportTicket:
     ticket.status = status
     ticket.save(update_fields=["status", "updated_at"])
     return ticket
+
+
+def mark_staff_read(ticket) -> None:
+    """Отметить обращение прочитанным сотрудником (снимает точку unread).
+
+    ``update()`` не трогает ``updated_at`` (auto_now) — прочтение не ответ.
+    """
+    SupportTicket.objects.filter(pk=ticket.pk).update(staff_read_at=timezone.now())
