@@ -22,12 +22,11 @@ from apps.scheduling.models import (
     ScheduleDutyRole,
     ScheduleEntry,
     ScheduleEntryDisciplineSelection,
-    WeekParity,
 )
+from apps.scheduling.services.entry_match import entry_matches_session
 from apps.scheduling.services.slot_grid import (
     BOOKING_START_GRID_MINUTES,
     UNIVERSITY_PAIR_SLOTS,
-    academic_week_parity,
     time_to_minutes,
 )
 
@@ -251,37 +250,6 @@ def is_session_in_manual_booking_window(
 # --- Whitelist расписания -------------------------------------------------------
 
 
-def _entry_lab_work_ids(entry: ScheduleEntry) -> set[int]:
-    """ЛР слота: явные выборки по дисциплинам; пустая выборка = все ЛР дисциплины."""
-    ids: set[int] = set()
-    for selection in entry.discipline_selections.all():
-        explicit = {lab_work.pk for lab_work in selection.lab_works.all()}
-        if explicit:
-            ids.update(explicit)
-        else:
-            ids.update(selection.discipline.lab_works.values_list("pk", flat=True))
-    return ids
-
-
-def _entry_matches_session(entry: ScheduleEntry, session: LabSession) -> bool:
-    local_start = timezone.localtime(session.starts_at)
-    local_end = timezone.localtime(session.ends_at)
-    if entry.weekday != local_start.weekday():
-        return False
-    if (
-        entry.week_parity != WeekParity.BOTH
-        and entry.week_parity != academic_week_parity(local_start.date())
-    ):
-        return False
-    if session.lab_work_id not in _entry_lab_work_ids(entry):
-        return False
-    entry_start_minutes = time_to_minutes(entry.start_time)
-    entry_end_minutes = entry_start_minutes + entry.duration_minutes
-    if time_to_minutes(local_start.time()) < entry_start_minutes:
-        return False
-    return time_to_minutes(local_end.time()) <= entry_end_minutes
-
-
 def _student_group_label(student) -> str:
     try:
         profile = student.profile
@@ -327,7 +295,7 @@ class ScheduleWhitelistIndex:
         candidates = self._by_slot.get(
             (session.room_id, session.semester_id, local_start.weekday()), []
         )
-        matched = [entry for entry in candidates if _entry_matches_session(entry, session)]
+        matched = [entry for entry in candidates if entry_matches_session(entry, session)]
         if not matched:
             return False
         if student is None:
