@@ -1,0 +1,13 @@
+{% if lab_works %}
+  <label for="id_lab_work">Лабораторная работа</label>
+  <select name="lab_work_id" id="id_lab_work"
+          hx-get="{% url 'staff-manual-slots' %}" hx-trigger="change" hx-include="this"
+          hx-target="#slots" hx-swap="innerHTML">
+    <option value="">— выберите работу —</option>
+    {% for lab_work in lab_works %}
+      <option value="{{ lab_work.pk }}">{{ lab_work }}</option>
+    {% endfor %}
+  </select>
+{% else %}
+  <p class="field-hint">В учебном плане группы нет работ вашей лаборатории.</p>
+{% endif %}

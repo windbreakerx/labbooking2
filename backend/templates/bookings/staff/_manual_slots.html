@@ -1,0 +1,17 @@
+{% if by_date %}
+  {% for date, slots in by_date %}
+    <p class="field-hint">{{ date|date:"l, d E" }}</p>
+    <div class="slot-grid">
+      {% for slot in slots %}
+        <label class="slot-card slot-card--choice">
+          <input type="radio" name="session_id" value="{{ slot.session.pk }}" required>
+          <strong class="slot-card__time">{{ slot.session.starts_at|date:"H:i" }}–{{ slot.session.ends_at|date:"H:i" }}</strong>
+          <span class="slot-card__meta muted">{{ slot.session.room }}</span>
+          <span class="badge badge--muted">Занято: {{ slot.booked_count }}/{{ slot.session.capacity }}</span>
+        </label>
+      {% endfor %}
+    </div>
+  {% endfor %}
+{% else %}
+  <p class="field-hint">Нет слотов в окне ручной записи (две рабочие недели, университетские пары).</p>
+{% endif %}

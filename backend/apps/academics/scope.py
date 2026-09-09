@@ -246,3 +246,11 @@ def staff_students_qs(user: User) -> QuerySet[User]:
             | Q(profile__student_group__lab_works__disciplines__in=discipline_ids)
         )
     return qs.filter(filters).distinct().order_by("last_name", "first_name", "email")
+
+
+def staff_manual_lab_work_items(user: User, student: User) -> QuerySet[LabWork]:
+    """ЛР для ручной записи: учебный план группы студента ∩ зона сотрудника."""
+    plan_ids = set(student_lab_works_qs(student).values_list("pk", flat=True))
+    if not plan_ids:
+        return LabWork.objects.none()
+    return staff_lab_works_qs(user).filter(pk__in=plan_ids)

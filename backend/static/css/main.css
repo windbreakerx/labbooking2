@@ -1023,3 +1023,77 @@ ul.messages {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* --- Стафф: таблица броней и ручная запись --- */
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  align-items: flex-end;
+}
+.filter-bar__field {
+  flex: 1 1 150px;
+  min-width: 140px;
+}
+.filter-bar__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.table__sort {
+  color: inherit;
+  text-decoration: none;
+}
+.table__sort:hover {
+  text-decoration: underline;
+}
+.row-actions summary {
+  cursor: pointer;
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.row-actions__form {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  min-width: 220px;
+}
+.manual-booking__step {
+  margin-bottom: var(--space-5);
+}
+.manual-booking__step h2 {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-3);
+}
+.student-results {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  max-height: 260px;
+  overflow-y: auto;
+}
+.student-option {
+  display: grid;
+  gap: var(--space-1);
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font: inherit;
+}
+.student-option:hover {
+  border-color: var(--color-primary);
+}
+.student-option--selected {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-sm);
+}
+.slot-card--choice {
+  cursor: pointer;
+}
+.slot-card--choice input {
+  width: auto;
+}

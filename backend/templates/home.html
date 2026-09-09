@@ -26,10 +26,10 @@
       <span class="quick-link__note">Предстоящие лабораторные и история с отменой</span>
     </a>
   {% else %}
-    <div class="quick-link">
+    <a class="quick-link" href="{% url 'staff-bookings' %}">
       <span class="quick-link__title">Работа с записями</span>
-      <span class="quick-link__note">Записи студентов — раздел скоро откроется</span>
-    </div>
+      <span class="quick-link__note">Записи студентов: фильтры, статусы и ручная запись</span>
+    </a>
   {% endif %}
 </div>
 {% endblock %}

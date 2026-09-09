@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Записи — сотрудник{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Записи студентов</h1>
+  {% if can_modify %}
+    <a class="button" href="{% url 'staff-manual-booking' %}">Ручная запись</a>
+  {% endif %}
+</div>
+
+<form class="card filter-bar" method="get">
+  <div class="filter-bar__field">
+    <label for="f-status">Статус</label>
+    <select name="status" id="f-status">
+      <option value="">— любой —</option>
+      {% for value, label in status_choices %}
+        <option value="{{ value }}"{% if filters.status == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-discipline">Дисциплина</label>
+    <select name="discipline" id="f-discipline">
+      <option value="">— любая —</option>
+      {% for discipline in disciplines %}
+        <option value="{{ discipline.pk }}"{% if filters.discipline == discipline.pk|stringformat:"s" %} selected{% endif %}>{{ discipline.title }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-student">Студент</label>
+    <input type="search" id="f-student" name="student" value="{{ filters.student }}" placeholder="ФИО или email">
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-group">Группа</label>
+    <input type="text" id="f-group" name="group" value="{{ filters.group }}">
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-room">Аудитория</label>
+    <input type="text" id="f-room" name="room" value="{{ filters.room }}">
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-from">Дата с</label>
+    <input type="date" id="f-from" name="date_from" value="{{ filters.date_from }}">
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-to">по</label>
+    <input type="date" id="f-to" name="date_to" value="{{ filters.date_to }}">
+  </div>
+  <div class="filter-bar__actions">
+    <button class="button" type="submit">Применить</button>
+    <a class="button button--secondary" href="{% url 'staff-bookings' %}">Сбросить</a>
+  </div>
+</form>
+
+{% if rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          {% for column in columns %}
+            <th><a class="table__sort" href="{{ column.href }}">{{ column.label }}</a></th>
+          {% endfor %}
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          {% with booking=row.booking %}
+            <tr>
+              <td>
+                <strong>{{ booking.student.last_name }} {{ booking.student.first_name }}</strong><br>
+                <span class="muted">{{ booking.student.email }}</span>
+              </td>
+              <td>{{ booking.student.profile.student_group.name|default:booking.student.profile.group_name }}</td>
+              <td>{{ booking.discipline.title }}</td>
+              <td>{{ booking.lab_work.title }}</td>
+              <td>{{ booking.scheduled_at|date:"d.m.Y H:i" }}</td>
+              <td>{{ booking.room }}</td>
+              <td>
+                {{ booking.get_registration_type_display }}
+                {% if booking.registered_by %}<br><span class="muted">{{ booking.registered_by.last_name }}</span>{% endif %}
+              </td>
+              <td><span class="badge badge--{{ booking.current_status|lower }}">{{ booking.get_current_status_display }}</span></td>
+              <td>
+                {% if can_modify and row.transitions %}
+                  <details class="row-actions">
+                    <summary>Изменить</summary>
+                    <form class="row-actions__form" method="post" action="{% url 'staff-booking-status' booking.pk %}">
+                      {% csrf_token %}
+                      <label for="status-{{ booking.pk }}">Новый статус</label>
+                      <select name="status" id="status-{{ booking.pk }}">
+                        {% for option in row.transitions %}
+                          <option value="{{ option.status }}">{{ option.label }}</option>
+                        {% endfor %}
+                      </select>
+                      <label for="note-{{ booking.pk }}">Причина</label>
+                      <textarea name="note" id="note-{{ booking.pk }}" rows="2"
+                                placeholder="Обязательна для «Посетил» и «Отмена»"></textarea>
+                      <button class="button button--sm" type="submit">Сохранить</button>
+                    </form>
+                  </details>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endwith %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">
+    <strong>Записей нет</strong>
+    Измените фильтры или создайте запись вручную.
+  </div>
+{% endif %}
+{% endblock %}

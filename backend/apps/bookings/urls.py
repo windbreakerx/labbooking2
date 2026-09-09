@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.bookings.views import student, support
+from apps.bookings.views import staff, student, support
 
 urlpatterns = [
     path("disciplines/", student.DisciplinesView.as_view(), name="disciplines"),
@@ -22,6 +22,28 @@ urlpatterns = [
     path("support/<int:pk>/", support.SupportChatView.as_view(), name="support-detail"),
     path("support/<int:pk>/messages/", support.SupportMessagesView.as_view(), name="support-messages"),
     path("support/<int:pk>/reply/", support.SupportReplyView.as_view(), name="support-reply"),
+    path("staff/bookings/", staff.StaffBookingsView.as_view(), name="staff-bookings"),
+    path(
+        "staff/bookings/<int:pk>/status/",
+        staff.StaffBookingStatusView.as_view(),
+        name="staff-booking-status",
+    ),
+    path("staff/manual-booking/", staff.StaffManualBookingView.as_view(), name="staff-manual-booking"),
+    path(
+        "staff/manual-booking/students/",
+        staff.StaffManualStudentSearchView.as_view(),
+        name="staff-manual-students",
+    ),
+    path(
+        "staff/manual-booking/lab-works/",
+        staff.StaffManualLabWorksView.as_view(),
+        name="staff-manual-lab-works",
+    ),
+    path(
+        "staff/manual-booking/slots/",
+        staff.StaffManualSlotsView.as_view(),
+        name="staff-manual-slots",
+    ),
     path("staff/support/", support.StaffSupportView.as_view(), name="staff-support"),
     path(
         "staff/support/fragments/threads/",

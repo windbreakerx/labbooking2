@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Ручная запись{% endblock %}
+{% block extra_js %}<script src="{% static 'js/staff-booking.js' %}" defer></script>{% endblock %}
+{% block content %}
+<div class="page-header">
+  <a class="button button--secondary button--sm" href="{% url 'staff-bookings' %}">← Записи</a>
+  <h1>Ручная запись студента</h1>
+</div>
+
+<form method="post" action="{% url 'staff-manual-booking' %}" class="card manual-booking">
+  {% csrf_token %}
+
+  <div class="manual-booking__step">
+    <h2>1. Студент</h2>
+    <input type="search" name="q" placeholder="Фамилия, имя, email или группа — минимум 2 символа"
+           aria-label="Поиск студента" autocomplete="off"
+           hx-get="{% url 'staff-manual-students' %}" hx-trigger="input changed delay:300ms, search"
+           hx-target="#student-results" hx-swap="innerHTML">
+    <div id="student-results" class="student-results"></div>
+    <input type="hidden" name="student_id" id="student-id">
+    <p class="field-hint" id="selected-student" hidden></p>
+  </div>
+
+  <div class="manual-booking__step">
+    <h2>2. Лабораторная работа</h2>
+    <div id="lab-works" data-url="{% url 'staff-manual-lab-works' %}">
+      <p class="field-hint">Сначала выберите студента — появится список работ из учебного плана его группы.</p>
+    </div>
+  </div>
+
+  <div class="manual-booking__step">
+    <h2>3. Слот</h2>
+    <div id="slots">
+      <p class="field-hint">После выбора работы здесь появятся доступные слоты в пределах двух рабочих недель.</p>
+    </div>
+  </div>
+
+  <div class="form-actions">
+    <button class="button" type="submit">Записать</button>
+  </div>
+</form>
+{% endblock %}

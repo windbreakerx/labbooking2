@@ -1,0 +1,11 @@
+{% if students %}
+  {% for s in students %}
+    <button type="button" class="student-option" data-id="{{ s.pk }}"
+            data-name="{{ s.last_name }} {{ s.first_name }}" data-email="{{ s.email }}">
+      <strong>{{ s.last_name }} {{ s.first_name }}</strong>
+      <span class="muted">{{ s.email }}{% if s.profile.student_group %} · {{ s.profile.student_group }}{% endif %}</span>
+    </button>
+  {% endfor %}
+{% elif query|length >= 2 %}
+  <p class="field-hint">Ничего не найдено.</p>
+{% endif %}
