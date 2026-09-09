@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Лабораторные работы{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Лабораторные работы</h1>
+  <span class="page-header__aside">{{ laboratory.name }}</span>
+</div>
+
+<div class="card">
+  <div class="card__header">
+    <h2 class="card__title">{% if edit_work %}Изменение: {{ edit_work.title }}{% else %}Новая работа{% endif %}</h2>
+    {% if edit_work %}<a class="button button--secondary button--sm" href="{% url 'lab-head-lab-works' %}">Закрыть</a>{% endif %}
+  </div>
+  <form method="post"
+        action="{% if edit_work %}{% url 'lab-head-lab-work-update' edit_work.pk %}{% else %}{% url 'lab-head-lab-work-create' %}{% endif %}"
+        class="form-grid">
+    {% csrf_token %}
+    <label for="wf-number">Номер</label>
+    <input type="number" name="number" id="wf-number" min="1" value="{{ edit_work.number|default:1 }}">
+    <label for="wf-title">Название</label>
+    <input type="text" name="title" id="wf-title" value="{{ edit_work.title|default:'' }}" required>
+    <label for="wf-disciplines">Дисциплины</label>
+    <select name="disciplines" id="wf-disciplines" multiple size="4">
+      {% for discipline in form_disciplines %}
+        <option value="{{ discipline.pk }}"{% if edit_work and discipline in edit_work.disciplines.all %} selected{% endif %}>{{ discipline.title }}</option>
+      {% endfor %}
+    </select>
+    <label for="wf-duration">Длительность</label>
+    <select name="duration_minutes" id="wf-duration">
+      {% for value, label in duration_choices %}
+        <option value="{{ value }}"{% if edit_work.duration_minutes == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="wf-capacity">Макс. мест</label>
+    <input type="number" name="capacity" id="wf-capacity" min="1" value="{{ edit_work.capacity|default:30 }}">
+    <label class="form-grid__check">
+      <input type="checkbox" name="is_published"{% if not edit_work or edit_work.is_published %} checked{% endif %}>
+      опубликована для студентов
+    </label>
+    <div class="form-actions">
+      <button class="button" type="submit">{% if edit_work %}Сохранить{% else %}Создать{% endif %}</button>
+    </div>
+  </form>
+  <p class="field-hint">Изменение мест и длительности синхронизируется с будущими открытыми слотами.</p>
+</div>
+
+{% if lab_works %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>№</th><th>Название</th><th>Дисциплины</th><th>Длительность</th><th>Мест</th><th>Статус</th><th>Действия</th></tr>
+      </thead>
+      <tbody>
+        {% for work in lab_works %}
+          <tr>
+            <td>{{ work.number }}</td>
+            <td><strong>{{ work.title }}</strong></td>
+            <td>{{ work.disciplines.all|join:", "|default:"—" }}</td>
+            <td>{{ work.duration_minutes }} мин</td>
+            <td>{{ work.capacity }}</td>
+            <td>
+              {% if work.is_published %}<span class="badge badge--open">опубликована</span>
+              {% else %}<span class="badge badge--muted">скрыта</span>{% endif %}
+            </td>
+            <td class="cluster">
+              <a class="button button--secondary button--sm" href="?edit={{ work.pk }}">Изменить</a>
+              <form method="post" action="{% url 'lab-head-lab-work-delete' work.pk %}"
+                    onsubmit="return confirm('Удалить работу «{{ work.title|escapejs }}»?');">
+                {% csrf_token %}
+                <button class="button button--danger button--sm" type="submit">Удалить</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <div class="empty-state">
+    <strong>Работ нет</strong>
+    Создайте работу и привяжите её к дисциплине — она появится в редакторе расписания.
+  </div>
+{% endif %}
+{% endblock %}

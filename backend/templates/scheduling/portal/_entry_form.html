@@ -1,0 +1,90 @@
+<div class="card">
+  <div class="card__header">
+    <h2 class="card__title">{% if form_entry %}Изменение записи{% else %}Новая запись{% endif %}</h2>
+    {% if form_entry %}<span class="badge badge--muted">{{ form_entry }}</span>{% endif %}
+    <a class="button button--secondary button--sm" href="?room={{ room.pk }}">Закрыть</a>
+  </div>
+  <form method="post"
+        action="{% if form_entry %}{% url 'lab-head-schedule-update' form_entry.pk %}{% else %}{% url 'lab-head-schedule-create' %}{% endif %}"
+        class="form-grid">
+    {% csrf_token %}
+    <input type="hidden" name="room" value="{{ room.pk }}">
+    <label for="ef-weekday">День недели</label>
+    <select name="weekday" id="ef-weekday">
+      {% for value, label in weekday_choices %}
+        <option value="{{ value }}"{% if form_initial.weekday == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="ef-start">Начало (пара)</label>
+    <select name="start_time" id="ef-start">
+      {% for value, label in pair_start_choices %}
+        <option value="{{ value }}"{% if form_initial.start_time == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="ef-duration">Длительность</label>
+    <select name="duration_minutes" id="ef-duration">
+      {% for value, label in duration_choices %}
+        <option value="{{ value }}"{% if form_initial.duration_minutes == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="ef-parity">Чётность недель</label>
+    <select name="week_parity" id="ef-parity">
+      {% for value, label in parity_choices %}
+        <option value="{{ value }}"{% if form_initial.week_parity == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="ef-duty-role">Тип дежурства</label>
+    <select name="duty_role" id="ef-duty-role">
+      {% for value, label in duty_choices %}
+        <option value="{{ value }}"{% if form_initial.duty_role == value %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="ef-duty-person">Дежурный</label>
+    <select name="duty_person" id="ef-duty-person">
+      <option value="">— по умолчанию —</option>
+      {% for person in form_people %}
+        <option value="{{ person.pk }}"{% if form_initial.duty_person == person.pk %} selected{% endif %}>{{ person.header_name }}</option>
+      {% endfor %}
+    </select>
+    <label for="ef-disciplines">Дисциплины</label>
+    <select name="disciplines" id="ef-disciplines" multiple size="4">
+      {% for discipline in form_disciplines %}
+        <option value="{{ discipline.pk }}"{% if discipline.pk|stringformat:"s" in form_discipline_ids %} selected{% endif %}>{{ discipline.title }}</option>
+      {% endfor %}
+    </select>
+    <label for="ef-lab-works">ЛР (пусто — все работы дисциплин)</label>
+    <select name="lab_works" id="ef-lab-works" multiple size="6">
+      {% for discipline, works in form_works_by_discipline %}
+        <optgroup label="{{ discipline.title }}">
+          {% for work in works %}
+            <option value="{{ work.pk }}"{% if work.pk|stringformat:"s" in form_lab_work_ids %} selected{% endif %}>ЛР {{ work.number }}: {{ work.title }} ({{ work.duration_minutes }} мин)</option>
+          {% endfor %}
+        </optgroup>
+      {% endfor %}
+    </select>
+    <label for="ef-capacity">Мест</label>
+    <input type="number" name="capacity" id="ef-capacity" min="1" value="{{ form_initial.capacity|default:room.capacity }}">
+    <label for="ef-load-group">Группа по нагрузке</label>
+    <input type="text" name="load_group_label" id="ef-load-group" value="{{ form_initial.load_group_label|default:'' }}">
+    <p class="field-hint">Заполняется только для дежурства преподавателя.</p>
+    <label for="ef-manual-title">Ручное описание</label>
+    <input type="text" name="manual_title" id="ef-manual-title" value="{{ form_initial.manual_title|default:'' }}">
+    <p class="field-hint">Обязательно для типа «Другое»; вместо дисциплин показывается в сетке.</p>
+    <div class="form-actions">
+      <button class="button" type="submit">{% if form_entry %}Сохранить{% else %}Создать{% endif %}</button>
+    </div>
+  </form>
+  {% if form_entry %}
+    <form method="post" action="{% url 'lab-head-schedule-delete' form_entry.pk %}" class="form-actions"
+          onsubmit="return confirm('Удалить запись расписания?');">
+      {% csrf_token %}
+      <label><input type="checkbox" name="confirm" value="yes"> подтвердить удаление</label>
+      <button class="button button--danger" type="submit">Удалить запись</button>
+      <p class="field-hint">
+        Обязательна, если у слотов есть будущие записи студентов
+        {% if delete_conflicts %}— сейчас их: {{ delete_conflicts }}{% endif %}.
+        После удаления осиротевшие слоты отменяются, студентам вернётся повторный доступ.
+      </p>
+    </form>
+  {% endif %}
+</div>

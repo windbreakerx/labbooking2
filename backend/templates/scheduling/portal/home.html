@@ -14,8 +14,9 @@
     <p class="muted">Привязано дисциплин: {{ bindings_count }}</p>
     <div class="cluster">
       <a class="button" href="{% url 'lab-head-bindings' %}">Привязки дисциплин</a>
-      <span class="badge badge--muted">Расписание — в разработке</span>
-      <span class="badge badge--muted">Люди и аудитории — в разработке</span>
+      <a class="button button--secondary" href="{% url 'lab-head-schedule' %}">Расписание</a>
+      <a class="button button--secondary" href="{% url 'lab-head-rooms' %}">Аудитории</a>
+      <a class="button button--secondary" href="{% url 'lab-head-lab-works' %}">Лабораторные работы</a>
     </div>
   </div>
 {% elif is_sys_admin %}

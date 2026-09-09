@@ -366,6 +366,8 @@ input[type="text"],
 input[type="email"],
 input[type="password"],
 input[type="search"],
+input[type="number"],
+input[type="date"],
 select,
 textarea {
   width: 100%;
@@ -1095,5 +1097,69 @@ ul.messages {
   cursor: pointer;
 }
 .slot-card--choice input {
+  width: auto;
+}
+
+/* --- Завлаб: редактор расписания, аудитории, ЛР --- */
+
+.schedule-grid {
+  table-layout: fixed;
+}
+.schedule-grid__pair {
+  width: 92px;
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  vertical-align: top;
+}
+.schedule-grid__weekend {
+  color: var(--color-muted);
+}
+.schedule-cell {
+  vertical-align: top;
+}
+.entry-chip {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2);
+  margin-bottom: var(--space-1);
+  background: var(--color-primary-soft);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  line-height: var(--line-height-tight);
+}
+.entry-chip:hover {
+  border-color: var(--color-primary);
+}
+.entry-chip__title {
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--text-sm);
+}
+.entry-chip__meta {
+  color: var(--color-text-secondary);
+}
+.schedule-free {
+  display: block;
+  padding: var(--space-2);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  color: var(--color-muted);
+  text-decoration: none;
+  font-weight: var(--font-weight-bold);
+}
+.schedule-free:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.form-grid__check {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.form-grid__check input {
   width: auto;
 }

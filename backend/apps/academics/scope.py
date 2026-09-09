@@ -149,6 +149,18 @@ def resolve_staff_training_center(user: User) -> TrainingCenter | None:
     return profile.training_center
 
 
+def laboratory_people_qs(laboratory: Laboratory) -> QuerySet[User]:
+    """Люди лаборатории для селекта дежурного: сотрудники лабы и преподаватели.
+
+    Управление «людьми» в портале срезано — персонал приходит через
+    seed_demo/CSV/админку с laboratories в профиле.
+    """
+    return User.objects.filter(
+        profile__laboratory=laboratory,
+        role__in=[UserRole.LAB_ADMIN, UserRole.LAB_HEAD, UserRole.TEACHER],
+    ).order_by("last_name", "first_name")
+
+
 def student_support_training_centers_qs(user: User) -> QuerySet[TrainingCenter]:
     """УЦ, куда студент может написать в поддержку: через свои дисциплины и ЛР."""
     group = resolve_student_group(user)

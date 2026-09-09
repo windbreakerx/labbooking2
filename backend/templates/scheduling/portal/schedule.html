@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Расписание{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Расписание</h1>
+  <span class="page-header__aside">{{ laboratory.name }}{% if semester %} · {{ semester.name }}{% endif %}</span>
+</div>
+
+{% if not semester %}
+  <div class="empty-state">
+    <strong>Нет активного семестра</strong>
+    Расписание доступно только при активном семестре.
+  </div>
+{% elif not rooms %}
+  <div class="empty-state">
+    <strong>В лаборатории нет аудиторий</strong>
+    Сначала создайте аудиторию в разделе «Аудитории».
+  </div>
+{% else %}
+  <form class="card filter-bar" method="get">
+    <div class="filter-bar__field">
+      <label for="f-room">Аудитория</label>
+      <select name="room" id="f-room">
+        {% for item in rooms %}
+          <option value="{{ item.pk }}"{% if item.pk == room.pk %} selected{% endif %}>ауд. {{ item.number }}{% if item.is_blocked %} — заблокирована{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-bar__field">
+      <label for="f-parity">Чётность недель</label>
+      <select name="parity" id="f-parity">
+        {% for value, label in parity_choices %}
+          <option value="{{ value }}"{% if value == parity %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-bar__actions">
+      <button class="button" type="submit">Показать</button>
+      <a class="button button--secondary" href="{% url 'lab-head-rooms' %}">Аудитории</a>
+    </div>
+  </form>
+
+  {% if room.is_blocked %}
+    <p class="field-hint">Аудитория заблокирована — создание и изменение записей недоступно, будущие слоты отменяются.</p>
+  {% elif room.is_excluded_from_autogen %}
+    <p class="field-hint">Аудитория исключена из автогенерации — записи можно вести, но слоты для студентов не создаются.</p>
+  {% endif %}
+
+  {% if form_action %}
+    {% include "scheduling/portal/_entry_form.html" %}
+  {% endif %}
+
+  <div class="table-wrap">
+    <table class="table schedule-grid">
+      <thead>
+        <tr>
+          <th>Пара</th>
+          {% for label in weekday_labels %}
+            <th{% if forloop.counter0 >= 5 %} class="schedule-grid__weekend"{% endif %}>{{ label }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in grid_rows %}
+          <tr>
+            <th class="schedule-grid__pair">
+              {{ row.pair }}<br><span class="muted">{{ row.start }}–{{ row.end }}</span>
+            </th>
+            {% for cell in row.cells %}
+              <td class="schedule-cell">
+                {% for chip in cell %}
+                  <a class="entry-chip" href="?room={{ room.pk }}&edit={{ chip.entry.pk }}">
+                    <span class="entry-chip__title">{{ chip.title }}</span>
+                    <span class="entry-chip__meta">
+                      {% if chip.time_note %}{{ chip.time_note }} · {% endif %}
+                      {% if chip.entry.duty_person %}{{ chip.entry.duty_person.header_name }} · {% endif %}
+                      мест: {{ chip.entry.capacity }}
+                    </span>
+                    {% if chip.parity_label %}<span class="badge badge--muted">{{ chip.parity_label }}</span>{% endif %}
+                  </a>
+                {% endfor %}
+                {% if not cell and not room.is_blocked %}
+                  <a class="schedule-free" href="?room={{ room.pk }}&new={{ forloop.counter0 }}-{{ row.start }}"
+                     title="Добавить запись на {{ row.pair }} пару">+</a>
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if unplaced %}
+    <div class="card">
+      <div class="card__header"><h2 class="card__title">Вне сетки пар</h2></div>
+      <div class="stack">
+        {% for chip in unplaced %}
+          <a class="entry-chip" href="?room={{ room.pk }}&edit={{ chip.entry.pk }}">
+            <span class="entry-chip__title">{{ chip.entry }}</span>
+          </a>
+        {% endfor %}
+      </div>
+      <p class="field-hint">Записи с началом вне пар — созданы вне редактора; новые слоты для студентов из них не генерируются.</p>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card__header"><h2 class="card__title">Копировать день</h2></div>
+    <form method="post" action="{% url 'lab-head-schedule-copy-day' %}" class="cluster">
+      {% csrf_token %}
+      <input type="hidden" name="room" value="{{ room.pk }}">
+      <label for="copy-source">Скопировать</label>
+      <select name="source_weekday" id="copy-source">
+        {% for value, label in weekday_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      <label for="copy-target">в</label>
+      <select name="target_weekday" id="copy-target">
+        {% for value, label in weekday_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      <label for="copy-parity">чётность</label>
+      <select name="week_parity" id="copy-parity">
+        {% for value, label in parity_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      <button class="button" type="submit">Копировать</button>
+    </form>
+    <p class="field-hint">Занятые слоты (та же пара и пересекающаяся чётность) пропускаются.</p>
+  </div>
+{% endif %}
+{% endblock %}
