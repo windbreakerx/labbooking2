@@ -5,8 +5,10 @@ staff_filters, слоты ручной записи — staff_manual_slots, му
 BookingService. TEACHER — только чтение (staff_can_modify_bookings).
 """
 
+from urllib.parse import urlencode
+
 from django.contrib import messages
-from django.http import HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View
@@ -18,6 +20,7 @@ from apps.academics.scope import (
     staff_students_qs,
 )
 from apps.bookings.models import Booking, BookingStatus
+from apps.bookings.reports import XLSX_CONTENT_TYPE, generate_report
 from apps.bookings.scope import staff_bookings_qs
 from apps.bookings.services import BookingError, BookingService
 from apps.bookings.services.booking_mutations import STATUS_TRANSITIONS
@@ -223,3 +226,37 @@ class StaffManualSlotsView(StaffRequiredMixin, View):
             "bookings/staff/_manual_slots.html",
             {"lab_work": lab_work, "by_date": sorted(by_date.items())},
         )
+
+
+class StaffReportsView(StaffRequiredMixin, View):
+    """Лендинг отчётов: период/дисциплина применяются к ссылкам выгрузок."""
+
+    def get(self, request):
+        query = {
+            key: request.GET[key]
+            for key in ("date_from", "date_to", "discipline")
+            if request.GET.get(key)
+        }
+        return render(
+            request,
+            "bookings/staff/reports.html",
+            {
+                "filters": request.GET,
+                "query_string": urlencode(query),
+                "disciplines": staff_disciplines_qs(request.user),
+            },
+        )
+
+
+class StaffReportDownloadView(StaffRequiredMixin, View):
+    def get(self, request, report_type):
+        payload = generate_report(
+            report_type,
+            date_from=request.GET.get("date_from", ""),
+            date_to=request.GET.get("date_to", ""),
+            discipline_id=request.GET.get("discipline", ""),
+            staff_user=request.user,
+        )
+        response = HttpResponse(payload, content_type=XLSX_CONTENT_TYPE)
+        response["Content-Disposition"] = f'attachment; filename="{report_type}.xlsx"'
+        return response

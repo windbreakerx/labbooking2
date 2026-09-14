@@ -23,6 +23,7 @@ from apps.scheduling.views.schedule import (
     LabHeadScheduleCopyDayView,
     LabHeadScheduleCreateView,
     LabHeadScheduleDeleteView,
+    LabHeadScheduleExportView,
     LabHeadScheduleUpdateView,
     LabHeadScheduleView,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "LabHeadScheduleCopyDayView",
     "LabHeadScheduleCreateView",
     "LabHeadScheduleDeleteView",
+    "LabHeadScheduleExportView",
     "LabHeadScheduleUpdateView",
     "LabHeadScheduleView",
     "LabSelectView",

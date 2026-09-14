@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Отчёты{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Отчёты</h1>
+  <span class="page-header__aside">Excel-выгрузки записей</span>
+</div>
+
+<form class="card filter-bar" method="get">
+  <div class="filter-bar__field">
+    <label for="f-from">Дата с</label>
+    <input type="date" name="date_from" id="f-from" value="{{ filters.date_from }}">
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-to">Дата по</label>
+    <input type="date" name="date_to" id="f-to" value="{{ filters.date_to }}">
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-discipline">Дисциплина</label>
+    <select name="discipline" id="f-discipline">
+      <option value="">Все дисциплины</option>
+      {% for item in disciplines %}
+        <option value="{{ item.pk }}"{% if filters.discipline == item.pk|stringformat:"s" %} selected{% endif %}>{{ item.title }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-bar__actions">
+    <button class="button" type="submit">Применить</button>
+  </div>
+</form>
+<p class="field-hint">Оставьте поля пустыми, чтобы выгрузить все доступные данные.</p>
+
+<div class="stack">
+  <a class="card" href="{% url 'staff-report-download' 'bookings' %}{% if query_string %}?{{ query_string }}{% endif %}">
+    <div class="card__header"><h2 class="card__title">Записи на период</h2></div>
+    <p>Полный список записей с ФИО, группой, дисциплиной и статусом.</p>
+    <span class="button button--secondary">Скачать XLSX</span>
+  </a>
+  <a class="card" href="{% url 'staff-report-download' 'attendance' %}{% if query_string %}?{{ query_string }}{% endif %}">
+    <div class="card__header"><h2 class="card__title">Посещаемость</h2></div>
+    <p>Только посещения и неявки за выбранный период.</p>
+    <span class="button button--secondary">Скачать XLSX</span>
+  </a>
+  <a class="card" href="{% url 'staff-report-download' 'discipline_summary' %}{% if query_string %}?{{ query_string }}{% endif %}">
+    <div class="card__header"><h2 class="card__title">Свод по дисциплине</h2></div>
+    <p>Агрегированная статистика по дисциплинам.</p>
+    <span class="button button--secondary">Скачать XLSX</span>
+  </a>
+</div>
+{% endblock %}

@@ -19,6 +19,7 @@
           <a class="nav__link{% if '/support/' in request.path and 'staff' not in request.path %} nav__link--current{% endif %}" href="{% url 'support' %}">Обращения</a>
         {% elif is_staff %}
           <a class="nav__link{% if '/staff/bookings' in request.path or '/staff/manual-booking' in request.path %} nav__link--current{% endif %}" href="{% url 'staff-bookings' %}">Записи</a>
+          <a class="nav__link{% if 'staff/reports' in request.path %} nav__link--current{% endif %}" href="{% url 'staff-reports' %}">Отчёты</a>
           <a class="nav__link{% if 'staff/support' in request.path %} nav__link--current{% endif %}" href="{% url 'staff-support' %}">Обращения</a>
         {% endif %}
       </nav>

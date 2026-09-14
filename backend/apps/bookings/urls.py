@@ -44,6 +44,12 @@ urlpatterns = [
         staff.StaffManualSlotsView.as_view(),
         name="staff-manual-slots",
     ),
+    path("staff/reports/", staff.StaffReportsView.as_view(), name="staff-reports"),
+    path(
+        "staff/reports/<str:report_type>/download/",
+        staff.StaffReportDownloadView.as_view(),
+        name="staff-report-download",
+    ),
     path("staff/support/", support.StaffSupportView.as_view(), name="staff-support"),
     path(
         "staff/support/fragments/threads/",

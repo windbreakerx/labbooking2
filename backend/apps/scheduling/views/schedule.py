@@ -7,14 +7,17 @@
 """
 
 from django.contrib import messages
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views import View
 
 from apps.academics.models import Semester
 from apps.academics.scope import laboratory_people_qs
+from apps.bookings.reports import XLSX_CONTENT_TYPE
 from apps.bookings.services.schedule_sync import sync_future_sessions_for_slot
 from apps.scheduling.models import ScheduleDutyRole, ScheduleEntry, WeekParity
+from apps.scheduling.reports import generate_lab_schedule_excel
 from apps.scheduling.services.entry_match import entry_lab_work_ids
 from apps.scheduling.services.schedule_admin import (
     ScheduleError,
@@ -258,3 +261,13 @@ class LabHeadScheduleCopyDayView(PortalLaboratoryMixin, View):
             request, f"Скопировано записей: {created}, пропущено занятых слотов: {skipped}."
         )
         return redirect(_back(room.pk))
+
+
+class LabHeadScheduleExportView(PortalLaboratoryMixin, View):
+    """XLSX-выгрузка сетки расписания: лист на аудиторию выбранной лаборатории."""
+
+    def get(self, request):
+        payload = generate_lab_schedule_excel(self.laboratory, _active_semester())
+        response = HttpResponse(payload, content_type=XLSX_CONTENT_TYPE)
+        response["Content-Disposition"] = 'attachment; filename="lab_head_schedule.xlsx"'
+        return response

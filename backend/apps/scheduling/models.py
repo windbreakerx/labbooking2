@@ -73,7 +73,6 @@ class Room(models.Model):
     training_center = models.ForeignKey(TrainingCenter, on_delete=models.CASCADE, related_name="rooms")
     number = models.CharField("Аудитория №", max_length=32)
     name = models.CharField("Название", max_length=256, blank=True)
-    photo = models.ImageField("Фотография", upload_to="rooms/", blank=True)
     capacity = models.PositiveIntegerField("Вместимость", default=30)
     is_blocked = models.BooleanField("Заблокирована", default=False)
     is_excluded_from_autogen = models.BooleanField("Исключена из автогенерации слотов", default=False)
@@ -206,7 +205,6 @@ class LabStand(models.Model):
     training_center = models.ForeignKey(TrainingCenter, on_delete=models.CASCADE, related_name="stands")
     room = models.ForeignKey(Room, on_delete=models.PROTECT, related_name="stands")
     description = models.TextField("Описание", blank=True)
-    photo = models.ImageField("Фотография", upload_to="stands/", blank=True)
     is_published = models.BooleanField("Опубликован", default=True)
 
     class Meta:
