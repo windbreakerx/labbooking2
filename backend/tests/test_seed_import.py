@@ -11,6 +11,7 @@ import pytest
 from django.core.management import call_command
 
 from apps.academics.models import (
+    Department,
     Discipline,
     Faculty,
     GroupDisciplineLoad,
@@ -62,6 +63,7 @@ class TestSeedDemo:
         laboratory = Laboratory.objects.get(training_center=training_center)
         assert laboratory.faculty == faculty
         assert laboratory.lab_type == LaboratoryType.COMPLEX
+        assert Department.objects.filter(faculty=faculty).count() == 3
 
         rooms = Room.objects.filter(training_center=training_center)
         assert rooms.count() == 15
@@ -112,11 +114,31 @@ class TestImportDekanatCsv:
         _run_import(path, "disciplines", import_batch_id="B-1")
         discipline = Discipline.objects.get(code="NGF-001")
         assert discipline.semester.name == SEMESTER_NAME and discipline.is_published
+        assert discipline.department.title == "Кафедра транспорта и хранения нефти и газа"
         laboratory = Laboratory.objects.get(training_center=seeded)
         assert LabDisciplineBinding.objects.filter(laboratory=laboratory, discipline=discipline).exists()
 
         _run_import(path, "disciplines")
         assert Discipline.objects.filter(code="NGF-001").count() == 1
+
+    def test_discipline_department_by_code_range(self, seeded, tmp_path):
+        codes = ("NGF-001", "NGF-011", "NGF-012", "NGF-024", "NGF-025", "NGF-031", "ABC-9")
+        path = _write_csv(
+            tmp_path, "d.csv", ["code", "title", "training_center_number"],
+            [{"code": code, "title": f"Дисциплина {code}", "training_center_number": "1"} for code in codes],
+        )
+        _run_import(path, "disciplines")
+
+        titles = {code: Discipline.objects.get(code=code).department for code in codes}
+        tng, bur, dev = (
+            "Кафедра транспорта и хранения нефти и газа",
+            "Кафедра бурения скважин",
+            "Кафедра разработки и эксплуатации месторождений",
+        )
+        assert titles["NGF-001"].title == tng and titles["NGF-011"].title == tng
+        assert titles["NGF-012"].title == bur and titles["NGF-024"].title == bur
+        assert titles["NGF-025"].title == dev and titles["NGF-031"].title == dev
+        assert titles["ABC-9"] is None
 
     def test_curriculum_load_and_skip_unknown(self, seeded, tmp_path):
         groups = _write_csv(tmp_path, "g.csv", ["name"], [{"name": "ТНГ-24"}])

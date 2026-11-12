@@ -12,6 +12,7 @@ import re
 from django.core.management.base import BaseCommand
 
 from apps.academics.models import (
+    Department,
     Discipline,
     GroupDisciplineLoad,
     GroupDisciplineLoadSource,
@@ -24,6 +25,11 @@ from apps.users.models import User, UserProfile, UserRole
 
 IMPORT_TYPES = ("students", "teachers", "staff", "disciplines", "groups", "curriculum", "lab_bindings")
 STAFF_ROLES = {UserRole.LAB_ADMIN, UserRole.LAB_HEAD, UserRole.SYS_ADMIN}
+PILOT_DEPARTMENT_CODE_RANGES = (
+    ("Кафедра транспорта и хранения нефти и газа", 1, 11),
+    ("Кафедра бурения скважин", 12, 24),
+    ("Кафедра разработки и эксплуатации месторождений", 25, 31),
+)
 
 
 class Command(BaseCommand):
@@ -163,6 +169,16 @@ class Command(BaseCommand):
         )
         return int(created), int(not created)
 
+    def _resolve_department(self, code: str):
+        match = re.fullmatch(r"NGF-(\d{1,3})", code or "")
+        if not match:
+            return None
+        number = int(match.group(1))
+        for title, low, high in PILOT_DEPARTMENT_CODE_RANGES:
+            if low <= number <= high:
+                return Department.objects.filter(title=title).first()
+        return None
+
     def _import_discipline(self, row):
         title = self._clean(row, "title")
         if not title:
@@ -176,6 +192,9 @@ class Command(BaseCommand):
             "description": self._clean(row, "description"),
             "is_published": self._as_bool(row.get("is_published"), default=True),
         }
+        department = self._resolve_department(code)
+        if department:
+            defaults["department"] = department
         if code:
             discipline, created = Discipline.objects.update_or_create(code=code, defaults=defaults)
         else:

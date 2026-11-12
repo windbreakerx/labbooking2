@@ -9,13 +9,18 @@
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.academics.models import Faculty, Semester
+from apps.academics.models import Department, Faculty, Semester
 from apps.scheduling.models import Laboratory, LaboratoryType, Room, TrainingCenter
 from apps.users.models import User, UserProfile, UserRole
 
 LAB_NAME = "Комплексная учебная лаборатория нефтегазового факультета"
 SEMESTER_NAME = "Пилот 2026/2027 (нефтегаз)"
 PILOT_PASSWORD = "pilot123"
+DEPARTMENTS = [
+    "Кафедра транспорта и хранения нефти и газа",
+    "Кафедра бурения скважин",
+    "Кафедра разработки и эксплуатации месторождений",
+]
 ROOMS = [
     ("1123", 10), ("1124", 15), ("2105", 21), ("2111", 15), ("2112", 20),
     ("2113", 15), ("2114", 5), ("2115", 21), ("2116", 16), ("2117", 15),
@@ -35,6 +40,8 @@ class Command(BaseCommand):
         faculty = Faculty.objects.update_or_create(
             code="НГФ", defaults={"title": "Нефтегазовый факультет", "ordering": 0}
         )[0]
+        for title in DEPARTMENTS:
+            Department.objects.update_or_create(title=title, defaults={"faculty": faculty})
         training_center = TrainingCenter.objects.update_or_create(
             number=1, defaults={"name": LAB_NAME}
         )[0]
