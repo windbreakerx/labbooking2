@@ -6,11 +6,14 @@
 
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.views import LoginView, LogoutView
+from django.utils.decorators import method_decorator
 from django.views.generic import TemplateView
+from django_ratelimit.decorators import ratelimit
 
 from apps.users.forms import EmailAuthenticationForm
 
 
+@method_decorator(ratelimit(key="ip", rate="10/m", method="POST"), name="post")
 class WebLoginView(LoginView):
     template_name = "registration/login.html"
     authentication_form = EmailAuthenticationForm

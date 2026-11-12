@@ -5,7 +5,10 @@
 сисадмин может — с обязательной причиной (override).
 """
 
+from unittest.mock import patch
+
 import pytest
+from django.core.cache import cache
 from django.urls import reverse
 
 from apps.academics.models import Department, Discipline, Faculty
@@ -109,6 +112,19 @@ class TestLoginSkeleton:
         )
         assert response.status_code == 200
         assert "Неверный email или пароль." in response.content.decode()
+
+    def test_login_post_ratelimited(self, client, lab_head):
+        cache.clear()
+        with patch("time.time", return_value=1_000_000.0):
+            for _ in range(10):
+                response = client.post(
+                    reverse("login"), {"username": lab_head.email, "password": "wrong"}
+                )
+                assert response.status_code == 200
+            response = client.post(
+                reverse("login"), {"username": lab_head.email, "password": "pass"}
+            )
+            assert response.status_code == 403
 
     def test_authenticated_redirected_from_login(self, client, lab_head):
         client.force_login(lab_head)
