@@ -4,7 +4,7 @@
 
 ## Стек
 
-- Python 3.12, Django 5.1
+- Python 3.12, Django 5.2 (LTS)
 - PostgreSQL 16
 - Redis (кэш) + django-q2 (фоновые задачи, ORM-брокер)
 - gunicorn + nginx

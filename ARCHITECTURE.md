@@ -5,7 +5,7 @@
 
 ## Стек
 
-- Python 3.12, Django 5.1 — серверный рендеринг шаблонов + HTMX, без DRF.
+- Python 3.12, Django 5.2 (LTS) — серверный рендеринг шаблонов + HTMX, без DRF.
 - PostgreSQL 16 (psycopg 3), Redis — кэш; django-q2 (ORM-брокер) — фоновые задачи.
 - gunicorn + nginx (docker compose: `db`, `redis`, `web`, `nginx`, `scheduler`).
 - Аутентификация — сессии, логин по email (`User.email` = USERNAME_FIELD);
