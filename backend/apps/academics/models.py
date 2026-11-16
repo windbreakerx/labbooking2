@@ -124,7 +124,8 @@ class LabWork(models.Model):
     title = models.CharField("Название", max_length=256)
     description = models.TextField("Описание", blank=True)
     duration_minutes = models.PositiveIntegerField("Длительность (мин)", default=90, choices=ALLOWED_LAB_DURATIONS_CHOICES)
-    capacity = models.PositiveIntegerField("Макс. мест", default=30)
+    capacity = models.PositiveIntegerField("Макс. мест", default=3)
+    required_sessions = models.PositiveIntegerField("Требуется занятий", default=1)
     is_published = models.BooleanField("Опубликовано", default=True)
     training_centers = models.ManyToManyField("scheduling.TrainingCenter", blank=True, related_name="lab_works", verbose_name="Учебные центры")
     laboratories = models.ManyToManyField("scheduling.Laboratory", blank=True, related_name="lab_works", verbose_name="Лаборатории")
@@ -169,6 +170,23 @@ class GroupLabWorkOverride(models.Model):
 
     def __str__(self):
         return f"{self.group.name} / {self.semester.name} / {self.lab_work} / {self.mode}"
+
+
+class LabWorkBookingRelease(models.Model):
+    lab_work = models.ForeignKey(LabWork, on_delete=models.CASCADE, related_name="booking_releases", verbose_name="Лабораторная работа")
+    semester = models.ForeignKey(Semester, on_delete=models.CASCADE, related_name="lab_work_booking_releases", verbose_name="Семестр")
+    booking_opens_at = models.DateTimeField("Запись откроется", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Открытие записи на ЛР"
+        verbose_name_plural = "Открытие записи на ЛР"
+        constraints = [
+            models.UniqueConstraint(fields=["lab_work", "semester"], name="academics_labworkbookingrelease_unique"),
+        ]
+
+    def __str__(self):
+        status = "закрыта" if self.booking_opens_at is None else f"откроется {self.booking_opens_at:%d.%m.%Y %H:%M}"
+        return f"{self.lab_work} / {self.semester.name} — {status}"
 
 
 class LabWorkMethodics(models.Model):

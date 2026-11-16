@@ -8,8 +8,6 @@ from .models import (
     LabSession,
     LabStand,
     Room,
-    ScheduleEntry,
-    ScheduleEntryDisciplineSelection,
     TrainingCenter,
 )
 
@@ -52,19 +50,20 @@ class RoomAdmin(admin.ModelAdmin):
         "default_lab_staff",
         "capacity",
         "is_blocked",
-        "is_excluded_from_autogen",
     )
-    list_filter = ("training_center", "laboratory", "is_blocked", "is_excluded_from_autogen")
+    list_filter = ("training_center", "laboratory", "is_blocked")
     filter_horizontal = ("disciplines",)
     autocomplete_fields = ("default_lab_staff",)
 
 
 @admin.register(LabSession)
 class LabSessionAdmin(admin.ModelAdmin):
-    list_display = ("lab_work", "room", "starts_at", "capacity", "status")
-    list_filter = ("status", "semester", "room__training_center")
+    list_display = ("lab_work", "room", "starts_at", "capacity", "status", "booking_mode")
+    list_filter = ("status", "booking_mode", "semester", "room__training_center")
     date_hierarchy = "starts_at"
     search_fields = ("lab_work__title",)
+    filter_horizontal = ("allowed_student_groups", "used_stands")
+    autocomplete_fields = ("occupant_group",)
 
 
 @admin.register(Holiday)
@@ -74,21 +73,8 @@ class HolidayAdmin(admin.ModelAdmin):
 
 @admin.register(LabStand)
 class LabStandAdmin(admin.ModelAdmin):
-    list_display = ("name", "inventory_number", "training_center", "room", "is_published")
+    list_display = ("name", "inventory_number", "training_center", "room", "capacity", "is_published")
     list_filter = ("training_center", "is_published")
-
-
-class ScheduleEntryDisciplineSelectionInline(admin.TabularInline):
-    model = ScheduleEntryDisciplineSelection
-    extra = 0
-    filter_horizontal = ("lab_works",)
-
-
-@admin.register(ScheduleEntry)
-class ScheduleEntryAdmin(admin.ModelAdmin):
-    list_display = ("room", "weekday", "start_time", "week_parity", "duty_role", "duty_person", "is_active")
-    list_filter = ("semester", "week_parity", "is_active")
-    inlines = [ScheduleEntryDisciplineSelectionInline]
 
 
 @admin.register(LaboratoryBookingSettings)

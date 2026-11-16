@@ -25,6 +25,7 @@ class CancelSource(models.TextChoices):
 class RegistrationType(models.TextChoices):
     AUTO = "AUTO", "Автоматическая"
     MANUAL = "MANUAL", "Не автоматическая"
+    GROUP = "GROUP", "Групповая бронь"
 
 
 class Booking(models.Model):

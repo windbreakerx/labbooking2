@@ -9,6 +9,7 @@ from .models import (
     GroupDisciplineLoad,
     GroupLabWorkOverride,
     LabWork,
+    LabWorkBookingRelease,
     LabWorkMethodics,
     Semester,
     StudentGroup,
@@ -60,7 +61,7 @@ class DisciplineAdmin(admin.ModelAdmin):
 
 @admin.register(LabWork)
 class LabWorkAdmin(admin.ModelAdmin):
-    list_display = ("title", "code", "number", "duration_minutes", "capacity", "primary_stand", "is_published")
+    list_display = ("title", "code", "number", "duration_minutes", "capacity", "required_sessions", "primary_stand", "is_published")
     list_filter = ("is_published", "training_centers", "disciplines")
     search_fields = ("title", "code")
     filter_horizontal = ("disciplines", "training_centers", "laboratories")
@@ -84,3 +85,11 @@ class GroupDisciplineLoadAdmin(admin.ModelAdmin):
 class GroupLabWorkOverrideAdmin(admin.ModelAdmin):
     list_display = ("group", "semester", "lab_work", "mode", "is_active")
     list_filter = ("semester", "mode", "is_active")
+
+
+@admin.register(LabWorkBookingRelease)
+class LabWorkBookingReleaseAdmin(admin.ModelAdmin):
+    list_display = ("lab_work", "semester", "booking_opens_at")
+    list_filter = ("semester",)
+    search_fields = ("lab_work__title",)
+    autocomplete_fields = ("lab_work", "semester")

@@ -145,22 +145,22 @@ class Meta:
 
 ### Фаза 1. Модели и миграции
 
-- [ ] Изменить `LabWork.capacity` default → 3.
-- [ ] Добавить `LabWork.required_sessions`.
-- [ ] Добавить `LabStand.capacity`.
-- [ ] Добавить в `LabSession`:
+- [x] Изменить `LabWork.capacity` default → 3.
+- [x] Добавить `LabWork.required_sessions`.
+- [x] Добавить `LabStand.capacity`.
+- [x] Добавить в `LabSession`:
   - `booking_mode`,
   - `allowed_student_groups` (M2M),
   - `occupant_group` (FK),
   - `used_stands` (M2M).
-- [ ] Добавить `Booking.registration_type.GROUP`.
-- [ ] Создать `LabWorkBookingRelease` в `apps/academics`.
-- [ ] Удалить `ScheduleEntry`, `ScheduleEntryDisciplineSelection`, `WeekParity`, `ScheduleDutyRole`.
-- [ ] Убрать `Room.is_excluded_from_autogen`.
-- [ ] Обновить constraints `LabSession`:
-  - partial unique без `CANCELLED` (форму уточнить по стендам на этапе реализации);
+- [x] Добавить `Booking.registration_type.GROUP`.
+- [x] Создать `LabWorkBookingRelease` в `apps/academics`.
+- [x] Удалить `ScheduleEntry`, `ScheduleEntryDisciplineSelection`, `WeekParity`, `ScheduleDutyRole`.
+- [x] Убрать `Room.is_excluded_from_autogen`.
+- [x] Обновить constraints `LabSession`:
+  - partial unique без `CANCELLED`;
   - добавить индексы.
-- [ ] Создать разрушительные миграции.
+- [x] Создать разрушительные миграции.
 
 ### Фаза 2. Сервисы
 
