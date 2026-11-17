@@ -228,25 +228,25 @@ class Meta:
 
 ### Фаза 6. Тесты, CI, инфраструктура
 
-- [ ] Переписать/удалить старые тесты расписания.
-- [ ] Добавить тесты:
+- [x] Переписать/удалить старые тесты расписания (устаревших `ScheduleEntry`-тестов не осталось).
+- [x] Добавить тесты:
   - `session_admin` / `session_bulk`;
   - групповые брони;
   - `required_sessions`;
   - release / групповые ограничения;
   - отчёты.
-- [ ] Обновить `.github/workflows/ci.yml`:
+- [x] Создать `.github/workflows/ci.yml`:
   - `ruff check .`
   - `pytest`
   - `python manage.py makemigrations --check --dry-run`
   - `bandit -r apps config`
   - `pip-audit`
-- [ ] Добавить индексы на `LabSession`, `AuditLog`, `SupportTicket`, `BookingStatusHistory`.
-- [ ] Поправить `nginx.conf`:
-  - убрать дублирующие security-заголовки или отдать их Django;
+- [x] Добавить индексы на `LabSession`, `AuditLog`, `SupportTicket`, `BookingStatusHistory`.
+- [x] Поправить `nginx.conf`:
+  - убрать дублирующие security-заголовки (отдаёт Django);
   - добавить `server_tokens off;`;
   - корректно пробрасывать `X-Forwarded-Proto`.
-- [ ] Создать management command для архивации старых `CANCELLED`-слотов и `AuditLog`.
+- [x] Создать management command для архивации старых `CANCELLED`-слотов и `AuditLog`.
 
 ---
 
@@ -258,6 +258,3 @@ class Meta:
 
 ---
 
-## 6. Следующий шаг
-
-Переходить к **Фазе 6: Тесты, CI, инфраструктура**.

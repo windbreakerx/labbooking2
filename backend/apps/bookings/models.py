@@ -79,7 +79,11 @@ class BookingStatusHistory(models.Model):
         verbose_name = "История статуса"
         verbose_name_plural = "История статусов"
         ordering = ["changed_at"]
-        indexes = [models.Index(fields=["booking", "acknowledged_at"], name="bookings_bo_booking_4a8f21_idx")]
+        indexes = [
+            models.Index(fields=["booking", "acknowledged_at"], name="bookings_bo_booking_4a8f21_idx"),
+            models.Index(fields=["changed_at"]),
+            models.Index(fields=["status", "changed_at"]),
+        ]
 
     def __str__(self):
         return f"{self.booking_id} → {self.status}"
@@ -136,6 +140,11 @@ class AuditLog(models.Model):
         verbose_name = "Аудит"
         verbose_name_plural = "Аудит"
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["action", "entity_type", "entity_id"]),
+            models.Index(fields=["actor", "created_at"]),
+        ]
 
     def __str__(self):
         return f"{self.action} {self.entity_type}:{self.entity_id}"
@@ -161,6 +170,11 @@ class SupportTicket(models.Model):
         verbose_name = "Обращение"
         verbose_name_plural = "Обращения"
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["student", "created_at"]),
+            models.Index(fields=["training_center", "created_at"]),
+        ]
 
     def __str__(self):
         return f"{self.subject} ({self.get_status_display()})"

@@ -2,48 +2,66 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, develop]
   pull_request:
+    branches: [main, master, develop]
 
 jobs:
-  test:
+  backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: labbooking2
+          POSTGRES_DB: labbooking2_test
           POSTGRES_USER: labbooking
           POSTGRES_PASSWORD: labbooking
-        ports:
-          - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U labbooking"
-          --health-interval 10s
+          --health-cmd pg_isready
+          --health-interval 5s
           --health-timeout 5s
           --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      DATABASE_URL: postgres://labbooking:labbooking@localhost:5432/labbooking2_test
+      REDIS_URL: redis://localhost:6379/0
+      SECRET_KEY: ci-secret-key
+      DEBUG: "false"
+      DJANGO_SETTINGS_MODULE: config.settings.test
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r backend/requirements-dev.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
 
       - name: Ruff
-        working-directory: backend
         run: ruff check .
 
-      - name: Migrate and test
-        working-directory: backend
-        env:
-          DJANGO_SETTINGS_MODULE: config.settings.test
-          DATABASE_URL: postgres://labbooking:labbooking@localhost:5432/labbooking2
-          SECRET_KEY: test-secret
-          DEBUG: "1"
-        run: |
-          python manage.py migrate --noinput
-          pytest
+      - name: Check migrations
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Run migrations
+        run: python manage.py migrate --noinput
+
+      - name: Pytest
+        run: pytest --ds=config.settings.test -v
+
+      - name: Bandit
+        run: bandit -r apps config
+
+      - name: pip-audit
+        run: pip-audit

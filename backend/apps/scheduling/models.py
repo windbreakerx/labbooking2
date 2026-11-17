@@ -144,6 +144,8 @@ class LabSession(models.Model):
             models.Index(fields=["lab_work", "starts_at"]),
             models.Index(fields=["room", "starts_at", "status"]),
             models.Index(fields=["semester", "status", "starts_at"]),
+            models.Index(fields=["teacher", "starts_at"]),
+            models.Index(fields=["status", "starts_at"]),
         ]
         constraints = [
             models.UniqueConstraint(
