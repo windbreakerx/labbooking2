@@ -46,5 +46,20 @@
     <p>Агрегированная статистика по дисциплинам.</p>
     <span class="button button--secondary">Скачать XLSX</span>
   </a>
+  <a class="card" href="{% url 'staff-report-room-load' %}">
+    <div class="card__header"><h2 class="card__title">Загруженность аудиторий</h2></div>
+    <p>Сводка по УЦ, лабораториям и аудиториям: слоты, часы, загрузка.</p>
+    <span class="button button--secondary">Открыть отчёт</span>
+  </a>
+  <a class="card" href="{% url 'staff-report-teacher-load' %}">
+    <div class="card__header"><h2 class="card__title">Загруженность преподавателей</h2></div>
+    <p>Количество слотов, часов и записей по каждому преподавателю.</p>
+    <span class="button button--secondary">Открыть отчёт</span>
+  </a>
+  <a class="card" href="{% url 'staff-report-curriculum' %}">
+    <div class="card__header"><h2 class="card__title">Выполнение учебного плана</h2></div>
+    <p>Прогресс групп по лабораторным работам с учётом required_sessions.</p>
+    <span class="button button--secondary">Открыть отчёт</span>
+  </a>
 </div>
 {% endblock %}

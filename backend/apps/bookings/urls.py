@@ -1,6 +1,6 @@
 from django.urls import path
 
-from apps.bookings.views import staff, student, support
+from apps.bookings.views import reports, staff, student, support
 
 urlpatterns = [
     path("disciplines/", student.DisciplinesView.as_view(), name="disciplines"),
@@ -49,6 +49,17 @@ urlpatterns = [
         "staff/reports/<str:report_type>/download/",
         staff.StaffReportDownloadView.as_view(),
         name="staff-report-download",
+    ),
+    path("staff/reports/room-load/", reports.RoomLoadReportView.as_view(), name="staff-report-room-load"),
+    path(
+        "staff/reports/teacher-load/",
+        reports.TeacherLoadReportView.as_view(),
+        name="staff-report-teacher-load",
+    ),
+    path(
+        "staff/reports/curriculum/",
+        reports.CurriculumReportView.as_view(),
+        name="staff-report-curriculum",
     ),
     path("staff/support/", support.StaffSupportView.as_view(), name="staff-support"),
     path(

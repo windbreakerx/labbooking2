@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Выполнение учебного плана{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Выполнение учебного плана</h1>
+</div>
+
+<form class="card filter-bar" method="get">
+  <div class="filter-bar__field">
+    <label for="f-semester">Семестр</label>
+    <select name="semester" id="f-semester">
+      <option value="">Все активные</option>
+      {% for s in semesters %}
+        <option value="{{ s.pk }}"{% if filters.semester == s.pk|stringformat:"s" %} selected{% endif %}>{{ s.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-bar__actions">
+    <button class="button" type="submit">Применить</button>
+    <a class="button button--secondary" href="?{{ request.GET.urlencode }}&format=xlsx">Скачать XLSX</a>
+  </div>
+</form>
+
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Семестр</th>
+        <th>Дисциплина</th>
+        <th>Группа</th>
+        <th>Лабораторная работа</th>
+        <th>Студентов</th>
+        <th>Требуется посещений</th>
+        <th>Посещено</th>
+        <th>Прогресс</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.semester }}</td>
+          <td>{{ row.discipline.title }}</td>
+          <td>{{ row.group.name }}</td>
+          <td>{{ row.lab_work.title }}</td>
+          <td>{{ row.students }}</td>
+          <td>{{ row.required_total }}</td>
+          <td>{{ row.visited }}</td>
+          <td>
+            <div class="progress-bar" title="{{ row.progress }}%">
+              <span class="progress-bar__fill" style="width:{{ row.progress }}%"></span>
+              <span class="progress-bar__label">{{ row.progress }}%</span>
+            </div>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="8" class="empty-cell">Нет данных</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

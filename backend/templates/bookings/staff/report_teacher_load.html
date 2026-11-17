@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Загруженность преподавателей{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Загруженность преподавателей</h1>
+</div>
+
+<form class="card filter-bar" method="get">
+  <div class="filter-bar__field">
+    <label for="f-from">Дата с</label>
+    <input type="date" name="date_from" id="f-from" value="{{ filters.date_from }}">
+  </div>
+  <div class="filter-bar__field">
+    <label for="f-to">Дата по</label>
+    <input type="date" name="date_to" id="f-to" value="{{ filters.date_to }}">
+  </div>
+  {% if teachers %}
+    <div class="filter-bar__field">
+      <label for="f-teacher">Преподаватель</label>
+      <select name="teacher" id="f-teacher">
+        <option value="">Все</option>
+        {% for t in teachers %}
+          <option value="{{ t.pk }}"{% if filters.teacher == t.pk|stringformat:"s" %} selected{% endif %}>{{ t.get_full_name|default:t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  {% endif %}
+  <div class="filter-bar__actions">
+    <button class="button" type="submit">Применить</button>
+    <a class="button button--secondary" href="?{{ request.GET.urlencode }}&format=xlsx">Скачать XLSX</a>
+  </div>
+</form>
+
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr><th>Преподаватель</th><th>Слотов</th><th>Часов</th><th>Записей</th></tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.teacher_name }}</td>
+          <td>{{ row.sessions }}</td>
+          <td>{{ row.hours }}</td>
+          <td>{{ row.bookings }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="empty-cell">Нет данных за выбранный период</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

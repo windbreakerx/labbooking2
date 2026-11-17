@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <span class="page-header__aside">{{ laboratory.name }}</span>
+</div>
+
+<div class="grid grid--4">
+  <div class="card kpi-card">
+    <span class="kpi-card__value">{{ kpi.total_sessions }}</span>
+    <span class="kpi-card__label">Всего слотов</span>
+  </div>
+  <div class="card kpi-card">
+    <span class="kpi-card__value">{{ kpi.upcoming_sessions }}</span>
+    <span class="kpi-card__label">Предстоит</span>
+  </div>
+  <div class="card kpi-card">
+    <span class="kpi-card__value">{{ kpi.visited }}</span>
+    <span class="kpi-card__label">Посещений</span>
+  </div>
+  <div class="card kpi-card">
+    <span class="kpi-card__value">{{ kpi.no_show }}</span>
+    <span class="kpi-card__label">Неявок</span>
+  </div>
+</div>
+
+<div class="grid grid--2">
+  <section class="card">
+    <div class="card__header"><h2 class="card__title">Загрузка аудиторий, %</h2></div>
+    <div class="chart-wrap">
+      <canvas id="roomChart"></canvas>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card__header"><h2 class="card__title">Выполнение учебного плана, %</h2></div>
+    <div class="chart-wrap">
+      <canvas id="curriculumChart"></canvas>
+    </div>
+  </section>
+</div>
+
+<div class="grid grid--2">
+  <section class="card">
+    <div class="card__header"><h2 class="card__title">Статусы записей</h2></div>
+    <div class="chart-wrap chart-wrap--small">
+      <canvas id="statusChart"></canvas>
+    </div>
+    <ul class="legend-list">
+      <li><span class="badge badge--visited">Посетил</span> {{ kpi.visited }}</li>
+      <li><span class="badge badge--booked">Записан</span> {{ kpi.booked }}</li>
+      <li><span class="badge badge--warning">Неявка</span> {{ kpi.no_show }}</li>
+      <li><span class="badge badge--muted">Отмены</span> {{ kpi.cancelled }}</li>
+    </ul>
+  </section>
+  <section class="card">
+    <div class="card__header"><h2 class="card__title">Топ неявок</h2></div>
+    {% if no_show_top %}
+      <table class="table">
+        <thead><tr><th>Студент</th><th>Неявок</th></tr></thead>
+        <tbody>
+          {% for item in no_show_top %}
+            <tr>
+              <td>{{ item.student__last_name }} {{ item.student__first_name }}</td>
+              <td>{{ item.count }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Неявок пока нет.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: { y: { beginAtZero: true, max: 100 } },
+  };
+
+  new Chart(document.getElementById('roomChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ room_labels|safe }},
+      datasets: [{
+        label: 'Загрузка аудитории, %',
+        data: {{ room_values|safe }},
+        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+        borderColor: 'rgba(54, 162, 235, 1)',
+        borderWidth: 1,
+      }],
+    },
+    options: commonOptions,
+  });
+
+  new Chart(document.getElementById('curriculumChart'), {
+    type: 'bar',
+    data: {
+      labels: {{ curriculum_labels|safe }},
+      datasets: [{
+        label: 'Выполнение плана, %',
+        data: {{ curriculum_values|safe }},
+        backgroundColor: 'rgba(75, 192, 192, 0.6)',
+        borderColor: 'rgba(75, 192, 192, 1)',
+        borderWidth: 1,
+      }],
+    },
+    options: commonOptions,
+  });
+
+  new Chart(document.getElementById('statusChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Посетил', 'Записан', 'Неявка', 'Отмены'],
+      datasets: [{
+        data: [{{ kpi.visited }}, {{ kpi.booked }}, {{ kpi.no_show }}, {{ kpi.cancelled }}],
+        backgroundColor: [
+          'rgba(75, 192, 192, 0.7)',
+          'rgba(54, 162, 235, 0.7)',
+          'rgba(255, 159, 64, 0.7)',
+          'rgba(201, 203, 207, 0.7)',
+        ],
+      }],
+    },
+    options: { responsive: true, maintainAspectRatio: false },
+  });
+</script>
+{% endblock %}

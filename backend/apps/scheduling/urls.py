@@ -4,6 +4,7 @@ from apps.scheduling.views import (
     LabDisciplineBindView,
     LabDisciplineUnbindView,
     LabHeadBindingsView,
+    LabHeadDashboardView,
     LabHeadHomeView,
     LabHeadLabWorkCreateView,
     LabHeadLabWorkDeleteView,
@@ -46,4 +47,5 @@ urlpatterns = [
         name="lab-head-lab-work-delete",
     ),
     path("schedule/", LabHeadScheduleView.as_view(), name="lab-head-schedule"),
+    path("dashboard/", LabHeadDashboardView.as_view(), name="lab-head-dashboard"),
 ]

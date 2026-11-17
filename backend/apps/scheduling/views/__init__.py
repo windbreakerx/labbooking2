@@ -9,6 +9,7 @@ from apps.scheduling.views.catalog import (
     LabHeadRoomsView,
     LabHeadRoomUpdateView,
 )
+from apps.scheduling.views.dashboard import LabHeadDashboardView
 from apps.scheduling.views.portal import (
     SESSION_ADMIN_LAB,
     LabDisciplineBindView,
@@ -35,6 +36,7 @@ __all__ = [
     "LabHeadRoomUpdateView",
     "LabHeadRoomsView",
     "LabHeadScheduleView",
+    "LabHeadDashboardView",
     "LabSelectView",
     "PortalLaboratoryMixin",
     "resolve_portal_laboratory",
