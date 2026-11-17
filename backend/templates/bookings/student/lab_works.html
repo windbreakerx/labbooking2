@@ -12,8 +12,16 @@
         <span class="quick-link__title">ЛР {{ row.lab_work.number }}: {{ row.lab_work.title }}</span>
         <span class="quick-link__note">
           {{ row.lab_work.duration_minutes }} мин
-          {% if row.status == 'VISITED' %} · <span class="badge badge--visited">пройдена</span>
-          {% elif row.status == 'BOOKED' %} · <span class="badge badge--booked">вы записаны</span>
+          {% if row.progress.visited >= row.progress.required %}
+            · <span class="badge badge--visited">пройдено {{ row.progress.visited }}/{{ row.progress.required }}</span>
+          {% elif row.progress.active > 0 %}
+            · <span class="badge badge--booked">записано {{ row.progress.active }}/{{ row.progress.required }}</span>
+          {% elif row.progress.release.state == 'open' %}
+            · <span class="badge badge--open">{{ row.progress.release.label }}</span>
+          {% elif row.progress.release.state == 'future' %}
+            · <span class="badge badge--muted">{{ row.progress.release.label }}</span>
+          {% else %}
+            · <span class="badge badge--closed">{{ row.progress.release.label }}</span>
           {% endif %}
         </span>
       </a>

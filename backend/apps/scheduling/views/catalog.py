@@ -5,12 +5,14 @@ SLOT_CANCELLED); изменение длительности ЛР синхрон
 (apps/scheduling/services/session_admin.py).
 """
 
+from datetime import datetime
+
 from django.contrib import messages
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View
 
-from apps.academics.models import ALLOWED_LAB_DURATIONS
+from apps.academics.models import ALLOWED_LAB_DURATIONS, LabWorkBookingRelease
 from apps.bookings.services.booking import BookingService
 from apps.scheduling.models import LabSession, LabSessionStatus
 from apps.scheduling.services.catalog_admin import (
@@ -92,7 +94,11 @@ def _block_room_sessions(request, room) -> int:
 class LabHeadLabWorksView(PortalLaboratoryMixin, View):
     def get(self, request):
         laboratory = self.laboratory
-        lab_works = list(laboratory.lab_works.prefetch_related("disciplines").order_by("number", "title"))
+        lab_works = list(
+            laboratory.lab_works.prefetch_related("disciplines", "disciplines__semester").order_by(
+                "number", "title"
+            )
+        )
         edit_pk = request.GET.get("edit", "")
         edit_work = next((work for work in lab_works if str(work.pk) == edit_pk), None)
         disciplines = [
@@ -101,6 +107,7 @@ class LabHeadLabWorksView(PortalLaboratoryMixin, View):
                 "discipline__title"
             )
         ]
+        release_rows = self._release_rows(lab_works)
         return render(
             request,
             "scheduling/portal/lab_works.html",
@@ -110,8 +117,67 @@ class LabHeadLabWorksView(PortalLaboratoryMixin, View):
                 "edit_work": edit_work,
                 "form_disciplines": disciplines,
                 "duration_choices": DURATION_CHOICES,
+                "release_rows": release_rows,
             },
         )
+
+    def _release_rows(self, lab_works):
+        release_map = self._release_map(lab_works)
+        rows = []
+        for work in lab_works:
+            for discipline in work.disciplines.all():
+                release = release_map.get((work.pk, discipline.semester_id))
+                opens_at = ""
+                if release and release.booking_opens_at:
+                    opens_at = release.booking_opens_at.strftime("%Y-%m-%dT%H:%M")
+                rows.append(
+                    {
+                        "lab_work": work,
+                        "discipline": discipline,
+                        "release": release,
+                        "opens_at": opens_at,
+                    }
+                )
+        return rows
+
+    def post(self, request):
+        action = request.POST.get("action")
+        if action == "release":
+            return self._update_release(request)
+        messages.error(request, "Неизвестное действие.")
+        return redirect("lab-head-lab-works")
+
+    def _release_map(self, lab_works):
+        work_ids = [work.pk for work in lab_works]
+        rows = LabWorkBookingRelease.objects.filter(lab_work_id__in=work_ids)
+        return {(row.lab_work_id, row.semester_id): row for row in rows}
+
+    def _update_release(self, request):
+        lab_work = self.laboratory.lab_works.filter(pk=request.POST.get("lab_work")).first()
+        semester_id = request.POST.get("semester")
+        raw_opens_at = request.POST.get("booking_opens_at", "").strip()
+        if lab_work is None or not semester_id:
+            messages.error(request, "Некорректные параметры записи.")
+            return redirect("lab-head-lab-works")
+        if raw_opens_at:
+            try:
+                naive = datetime.strptime(raw_opens_at, "%Y-%m-%dT%H:%M")
+                opens_at = timezone.make_aware(naive)
+            except (ValueError, TypeError):
+                messages.error(request, "Некорректная дата открытия записи.")
+                return redirect("lab-head-lab-works")
+            LabWorkBookingRelease.objects.update_or_create(
+                lab_work=lab_work,
+                semester_id=int(semester_id),
+                defaults={"booking_opens_at": opens_at},
+            )
+            messages.success(request, f"Запись на «{lab_work.title}» откроется {opens_at:%d.%m.%Y %H:%M}.")
+        else:
+            LabWorkBookingRelease.objects.filter(
+                lab_work=lab_work, semester_id=int(semester_id)
+            ).delete()
+            messages.success(request, f"Дата открытия записи на «{lab_work.title}» сброшена.")
+        return redirect("lab-head-lab-works")
 
 
 class LabHeadLabWorkCreateView(PortalLaboratoryMixin, View):

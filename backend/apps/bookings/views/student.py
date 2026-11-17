@@ -20,7 +20,11 @@ from apps.academics.scope import (
 )
 from apps.bookings.models import Booking, BookingStatus
 from apps.bookings.services import BookingError, BookingService
-from apps.bookings.services.session_catalog import student_bookable_slots
+from apps.bookings.services.session_catalog import (
+    booking_release_status,
+    student_bookable_slots,
+    student_group_sessions,
+)
 from apps.users.mixins import StudentRequiredMixin
 
 
@@ -31,20 +35,34 @@ def _client_ip(request):
     return request.META.get("REMOTE_ADDR")
 
 
-def _lab_work_status_map(user, lab_works) -> dict[int, str]:
-    """Статус записи студента по ЛР: BOOKED → «вы записаны», VISITED → «пройдена»."""
-    rows = (
+def _lab_work_progress(user, lab_works, semester) -> dict[int, dict]:
+    """Прогресс студента по ЛР: активные / посещённые / required."""
+    lab_work_ids = [lab_work.pk for lab_work in lab_works]
+    active_counts = {}
+    visited_counts = {}
+    for lab_work_id, status in (
         user.bookings.filter(
-            lab_work_id__in=[lab_work.pk for lab_work in lab_works],
+            lab_work_id__in=lab_work_ids,
             current_status__in=[BookingStatus.BOOKED, BookingStatus.VISITED],
         )
-        .order_by("-scheduled_at")
         .values_list("lab_work_id", "current_status")
-    )
-    statuses = {}
-    for lab_work_id, status in rows:
-        statuses.setdefault(lab_work_id, status)
-    return statuses
+    ):
+        if status == BookingStatus.BOOKED:
+            active_counts[lab_work_id] = active_counts.get(lab_work_id, 0) + 1
+        else:
+            visited_counts[lab_work_id] = visited_counts.get(lab_work_id, 0) + 1
+    progress = {}
+    for lab_work in lab_works:
+        active = active_counts.get(lab_work.pk, 0)
+        visited = visited_counts.get(lab_work.pk, 0)
+        release = booking_release_status(lab_work.pk, semester.pk)
+        progress[lab_work.pk] = {
+            "active": active,
+            "visited": visited,
+            "required": lab_work.required_sessions,
+            "release": release,
+        }
+    return progress
 
 
 class DisciplinesView(StudentRequiredMixin, View):
@@ -72,11 +90,11 @@ class LabWorksView(StudentRequiredMixin, View):
             return redirect("disciplines")
         discipline = get_object_or_404(Discipline, pk=pk)
         lab_works = list(student_lab_works_qs(request.user, pk))
-        statuses = _lab_work_status_map(request.user, lab_works)
+        progress = _lab_work_progress(request.user, lab_works, discipline.semester)
         rows = [
             {
                 "lab_work": lab_work,
-                "status": statuses.get(lab_work.pk),
+                "progress": progress.get(lab_work.pk, {"active": 0, "visited": 0, "required": 1}),
             }
             for lab_work in lab_works
         ]
@@ -95,14 +113,39 @@ class BookWizardView(StudentRequiredMixin, View):
             messages.error(request, "Лабораторная работа недоступна для вашей группы.")
             return redirect("disciplines")
         lab_work = get_object_or_404(LabWork, pk=pk, is_published=True)
+        now = timezone.now()
         by_date: dict = {}
-        for slot in student_bookable_slots(lab_work.pk, student=request.user):
+        for slot in student_bookable_slots(lab_work.pk, student=request.user, now=now):
             local_date = timezone.localtime(slot.session.starts_at).date()
-            by_date.setdefault(local_date, []).append(slot)
+            by_date.setdefault(local_date, []).append(
+                {
+                    "session": slot.session,
+                    "available_seats": slot.available_seats,
+                    "booked_count": slot.booked_count,
+                    "is_group": False,
+                }
+            )
+        for session in student_group_sessions(lab_work.pk, request.user, now=now):
+            local_date = timezone.localtime(session.starts_at).date()
+            by_date.setdefault(local_date, []).append(
+                {
+                    "session": session,
+                    "available_seats": 0,
+                    "booked_count": session.capacity,
+                    "is_group": True,
+                }
+            )
+        for date in by_date:
+            by_date[date].sort(key=lambda item: item["session"].starts_at)
+        release = booking_release_status(lab_work.pk, lab_work.disciplines.first().semester_id, now)
         return render(
             request,
             "bookings/student/book.html",
-            {"lab_work": lab_work, "by_date": sorted(by_date.items())},
+            {
+                "lab_work": lab_work,
+                "by_date": sorted(by_date.items()),
+                "release": release,
+            },
         )
 
 

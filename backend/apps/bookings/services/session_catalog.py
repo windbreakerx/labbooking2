@@ -11,6 +11,8 @@ from datetime import datetime
 
 from django.utils import timezone
 
+from apps.academics.models import LabWorkBookingRelease
+from apps.academics.scope import resolve_student_group
 from apps.bookings.models import Booking, BookingStatus
 from apps.bookings.services.seat_capacity import seats_available
 from apps.bookings.services.session_availability import (
@@ -206,3 +208,43 @@ def _student_busy_intervals(student: User | None) -> list[tuple]:
 
 def _overlaps_any_interval(session: LabSession, intervals: list[tuple]) -> bool:
     return any(start < session.ends_at and end > session.starts_at for start, end in intervals)
+
+
+# --- Отображение состояния релиза и групповых слотов ----------------------------
+
+
+def booking_release_status(lab_work_id: int, semester_id: int, now=None) -> dict:
+    """Состояние открытия записи на ЛР в семестре для отображения в каталоге."""
+    release = LabWorkBookingRelease.objects.filter(
+        lab_work_id=lab_work_id, semester_id=semester_id
+    ).first()
+    if release is None or release.booking_opens_at is None:
+        return {"state": "closed", "opens_at": None, "label": "Запись закрыта"}
+    moment = now or timezone.now()
+    if release.booking_opens_at <= moment:
+        return {"state": "open", "opens_at": None, "label": "Запись открыта"}
+    local = timezone.localtime(release.booking_opens_at)
+    return {
+        "state": "future",
+        "opens_at": release.booking_opens_at,
+        "label": f"Запись откроется {local:%d.%m.%Y в %H:%M}",
+    }
+
+
+def student_group_sessions(lab_work_id: int, student, now=None) -> list[LabSession]:
+    """Групповые слоты ЛР, видимые студенту (его группа-оккупант)."""
+    group = resolve_student_group(student)
+    if group is None:
+        return []
+    moment = now or timezone.now()
+    return list(
+        LabSession.objects.filter(
+            lab_work_id=lab_work_id,
+            booking_mode=LabSessionBookingMode.GROUP,
+            occupant_group=group,
+            status=LabSessionStatus.OPEN,
+            starts_at__gt=moment,
+        )
+        .select_related("room", "room__training_center")
+        .order_by("starts_at")
+    )

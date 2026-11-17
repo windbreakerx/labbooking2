@@ -19,6 +19,7 @@ from apps.scheduling.views.portal import (
     PortalLaboratoryMixin,
     resolve_portal_laboratory,
 )
+from apps.scheduling.views.schedule import LabHeadScheduleView
 
 __all__ = [
     "SESSION_ADMIN_LAB",
@@ -33,6 +34,7 @@ __all__ = [
     "LabHeadRoomCreateView",
     "LabHeadRoomUpdateView",
     "LabHeadRoomsView",
+    "LabHeadScheduleView",
     "LabSelectView",
     "PortalLaboratoryMixin",
     "resolve_portal_laboratory",

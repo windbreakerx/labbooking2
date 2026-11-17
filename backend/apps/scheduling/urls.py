@@ -12,6 +12,7 @@ from apps.scheduling.views import (
     LabHeadRoomCreateView,
     LabHeadRoomsView,
     LabHeadRoomUpdateView,
+    LabHeadScheduleView,
     LabSelectView,
 )
 
@@ -44,4 +45,5 @@ urlpatterns = [
         LabHeadLabWorkDeleteView.as_view(),
         name="lab-head-lab-work-delete",
     ),
+    path("schedule/", LabHeadScheduleView.as_view(), name="lab-head-schedule"),
 ]

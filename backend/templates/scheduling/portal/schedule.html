@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+{% block title %}Расписание{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Расписание</h1>
+  <span class="page-header__aside">{{ laboratory.name }}</span>
+</div>
+
+<div class="card card--narrow">
+  <form method="get" class="form-row">
+    <label for="sel-room">Аудитория</label>
+    <select name="room" id="sel-room" onchange="this.form.submit()">
+      {% for r in rooms %}
+        <option value="{{ r.pk }}"{% if selected_room.pk == r.pk %} selected{% endif %}>{{ r.number }} {{ r.name }}</option>
+      {% endfor %}
+    </select>
+    <label for="sel-semester">Семестр</label>
+    <select name="semester" id="sel-semester" onchange="this.form.submit()">
+      {% for s in semesters %}
+        <option value="{{ s.pk }}"{% if selected_semester.pk == s.pk %} selected{% endif %}>{{ s.name }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+{% if cancel_preview %}
+  <div class="card card--warning">
+    <div class="card__header">
+      <h2 class="card__title">Подтвердите отмену</h2>
+    </div>
+    <p>Будет отменено слотов: <strong>{{ cancel_preview.sessions }}</strong></p>
+    <p>Активных записей: <strong>{{ cancel_preview.booked_bookings }}</strong>, в очереди: <strong>{{ cancel_preview.waitlist_entries }}</strong></p>
+    <form method="post" class="form-actions">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="{{ cancel_form_data.action }}">
+      <input type="hidden" name="room" value="{{ room.pk }}">
+      <input type="hidden" name="semester" value="{{ semester.pk }}">
+      <input type="hidden" name="from_date" value="{{ cancel_form_data.from_date }}">
+      <input type="hidden" name="to_date" value="{{ cancel_form_data.to_date }}">
+      <input type="hidden" name="day" value="{{ cancel_form_data.day }}">
+      <input type="hidden" name="lab_work" value="{{ cancel_form_data.lab_work }}">
+      <input type="hidden" name="force" value="1">
+      <button class="button button--danger" type="submit">Подтвердить отмену</button>
+      <a class="button button--secondary" href="{% url 'lab-head-schedule' %}{% if room %}?room={{ room.pk }}&semester={{ semester.pk }}{% endif %}">Отмена</a>
+    </form>
+  </div>
+{% endif %}
+
+{% if not room or not semester %}
+  <div class="empty-state">
+    <strong>Выберите аудиторию и семестр</strong>
+    Без выбора аудитории и семестра календарь не отображается.
+  </div>
+{% else %}
+  <div class="table-wrap">
+    <table class="table table--schedule">
+      <thead>
+        <tr>
+          <th>Пара</th>
+          {% for label in weekday_labels %}<th>{{ label }}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in grid %}
+          <tr>
+            <td class="pair-cell">
+              <strong>{{ row.pair }}</strong><br>
+              <span class="muted">{{ row.start|date:"H:i" }}–{{ row.end|date:"H:i" }}</span>
+            </td>
+            {% for day_sessions in row.days %}
+              <td class="schedule-cell">
+                {% for session in day_sessions %}
+                  <details class="session-card{% if session.booking_mode == 'GROUP' %} session-card--group{% endif %}">
+                    <summary>
+                      <span class="session-card__title">{{ session.lab_work }}</span>
+                      <span class="badge badge--sm">
+                        {{ session.starts_at|date:"H:i" }}–{{ session.ends_at|date:"H:i" }}
+                      </span>
+                      {% if session.teacher %}<span class="muted session-card__teacher">{{ session.teacher.get_full_name|default:session.teacher }}</span>{% endif %}
+                    </summary>
+                    <form method="post" class="form-stacked">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="update">
+                      <input type="hidden" name="session_pk" value="{{ session.pk }}">
+                      <input type="hidden" name="room" value="{{ room.pk }}">
+                      <input type="hidden" name="semester" value="{{ semester.pk }}">
+                      <label>Лабораторная работа
+                        <select name="lab_work" required>
+                          {% for lw in lab_works %}
+                            <option value="{{ lw.pk }}"{% if lw.pk == session.lab_work_id %} selected{% endif %}>{{ lw }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>Дата
+                        <input type="date" name="date" value="{{ session.starts_at|date:'Y-m-d' }}" required>
+                      </label>
+                      <label>Время
+                        <input type="time" name="time" value="{{ session.starts_at|date:'H:i' }}" required>
+                      </label>
+                      <label>Преподаватель
+                        <select name="teacher">
+                          <option value="">—</option>
+                          {% for t in teachers %}
+                            <option value="{{ t.pk }}"{% if t.pk == session.teacher_id %} selected{% endif %}>{{ t.get_full_name|default:t }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>Режим
+                        <select name="booking_mode" class="mode-select" data-target="mode-edit-{{ session.pk }}">
+                          {% for value, label in booking_modes %}
+                            <option value="{{ value }}"{% if value == session.booking_mode %} selected{% endif %}>{{ label }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <div id="mode-edit-{{ session.pk }}" class="mode-group" style="display:{% if session.booking_mode == 'GROUP' %}block{% else %}none{% endif %};">
+                        <label>Группа-оккупант
+                          <select name="occupant_group">
+                            <option value="">—</option>
+                            {% for g in student_groups %}
+                              <option value="{{ g.pk }}"{% if g.pk == session.occupant_group_id %} selected{% endif %}>{{ g.name }}</option>
+                            {% endfor %}
+                          </select>
+                        </label>
+                      </div>
+                      <label>Мест
+                        <input type="number" name="capacity" min="1" value="{{ session.capacity }}">
+                      </label>
+                      <label>Разрешённые группы
+                        <select name="allowed_student_groups" multiple size="3">
+                          {% for g in student_groups %}
+                            <option value="{{ g.pk }}"{% if g.pk in session.allowed_group_ids %} selected{% endif %}>{{ g.name }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label>Стенды
+                        <select name="used_stands" multiple size="3">
+                          {% for s in stands %}
+                            <option value="{{ s.pk }}"{% if s.pk in session.used_stand_ids %} selected{% endif %}>{{ s.room.number }} — {{ s.name }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <div class="form-actions form-actions--compact">
+                        <button class="button button--sm" type="submit">Сохранить</button>
+                      </div>
+                    </form>
+                    <form method="post" class="form-actions form-actions--compact" onsubmit="return confirm('Отменить слот?');">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="delete">
+                      <input type="hidden" name="session_pk" value="{{ session.pk }}">
+                      <input type="hidden" name="room" value="{{ room.pk }}">
+                      <input type="hidden" name="semester" value="{{ semester.pk }}">
+                      <button class="button button--danger button--sm" type="submit">Отменить слот</button>
+                    </form>
+                  </details>
+                {% empty %}
+                  <span class="muted">—</span>
+                {% endfor %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <section class="card">
+    <div class="card__header">
+      <h2 class="card__title">Новый слот</h2>
+    </div>
+    <form method="post" class="form-grid">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create">
+      <input type="hidden" name="room" value="{{ room.pk }}">
+      <input type="hidden" name="semester" value="{{ semester.pk }}">
+      <label for="new-lw">Лабораторная работа</label>
+      <select name="lab_work" id="new-lw" required>
+        {% for lw in lab_works %}<option value="{{ lw.pk }}">{{ lw }}</option>{% endfor %}
+      </select>
+      <label for="new-date">Дата</label>
+      <input type="date" name="date" id="new-date" required>
+      <label for="new-time">Время</label>
+      <input type="time" name="time" id="new-time" required>
+      <label for="new-teacher">Преподаватель</label>
+      <select name="teacher" id="new-teacher">
+        <option value="">—</option>
+        {% for t in teachers %}<option value="{{ t.pk }}">{{ t.get_full_name|default:t }}</option>{% endfor %}
+      </select>
+      <label for="new-mode">Режим</label>
+      <select name="booking_mode" id="new-mode" class="mode-select" data-target="mode-create">
+        {% for value, label in booking_modes %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      <div id="mode-create" class="mode-group form-grid__full" style="display:none;">
+        <label for="new-group">Группа-оккупант</label>
+        <select name="occupant_group" id="new-group">
+          <option value="">—</option>
+          {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <label for="new-cap">Мест</label>
+      <input type="number" name="capacity" id="new-cap" min="1">
+      <label for="new-allowed">Разрешённые группы</label>
+      <select name="allowed_student_groups" id="new-allowed" multiple size="3">
+        {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
+      </select>
+      <label for="new-stands">Стенды</label>
+      <select name="used_stands" id="new-stands" multiple size="3">
+        {% for s in stands %}<option value="{{ s.pk }}">{{ s.room.number }} — {{ s.name }}</option>{% endfor %}
+      </select>
+      <div class="form-actions form-grid__full">
+        <button class="button" type="submit">Создать слот</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="card__header">
+      <h2 class="card__title">Серия слотов</h2>
+    </div>
+    <form method="post" class="form-grid">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_series">
+      <input type="hidden" name="room" value="{{ room.pk }}">
+      <input type="hidden" name="semester" value="{{ semester.pk }}">
+      <label for="series-lw">Лабораторная работа</label>
+      <select name="lab_work" id="series-lw" required>
+        {% for lw in lab_works %}<option value="{{ lw.pk }}">{{ lw }}</option>{% endfor %}
+      </select>
+      <label for="series-date">Первый слот</label>
+      <input type="date" name="start_date" id="series-date" required>
+      <label for="series-time">Время</label>
+      <input type="time" name="start_time" id="series-time" required>
+      <label for="series-repeat">Повтор</label>
+      <select name="repeat" id="series-repeat">
+        <option value="NONE">Нет</option>
+        <option value="WEEKLY">Еженедельно</option>
+        <option value="BIWEEKLY">Раз в две недели</option>
+      </select>
+      <label for="series-count">Количество</label>
+      <input type="number" name="occurrences" id="series-count" min="1" max="30" value="1" required>
+      <label for="series-skip">Пропускать праздники</label>
+      <input type="checkbox" name="skip_holidays" id="series-skip" checked>
+      <label for="series-teacher">Преподаватель</label>
+      <select name="teacher" id="series-teacher">
+        <option value="">—</option>
+        {% for t in teachers %}<option value="{{ t.pk }}">{{ t.get_full_name|default:t }}</option>{% endfor %}
+      </select>
+      <label for="series-mode">Режим</label>
+      <select name="booking_mode" id="series-mode" class="mode-select" data-target="mode-series">
+        {% for value, label in booking_modes %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      <div id="mode-series" class="mode-group form-grid__full" style="display:none;">
+        <label for="series-group">Группа-оккупант</label>
+        <select name="occupant_group" id="series-group">
+          <option value="">—</option>
+          {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
+        </select>
+      </div>
+      <label for="series-cap">Мест</label>
+      <input type="number" name="capacity" id="series-cap" min="1">
+      <label for="series-allowed">Разрешённые группы</label>
+      <select name="allowed_student_groups" id="series-allowed" multiple size="3">
+        {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
+      </select>
+      <label for="series-stands">Стенды</label>
+      <select name="used_stands" id="series-stands" multiple size="3">
+        {% for s in stands %}<option value="{{ s.pk }}">{{ s.room.number }} — {{ s.name }}</option>{% endfor %}
+      </select>
+      <div class="form-actions form-grid__full">
+        <button class="button" type="submit">Создать серию</button>
+      </div>
+    </form>
+  </section>
+
+  <div class="grid grid--2">
+    <section class="card">
+      <div class="card__header"><h2 class="card__title">Копировать день</h2></div>
+      <form method="post" class="form-stacked">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="copy_day">
+        <input type="hidden" name="room" value="{{ room.pk }}">
+        <input type="hidden" name="semester" value="{{ semester.pk }}">
+        <label>Откуда<input type="date" name="source_date" required></label>
+        <label>Куда<input type="date" name="target_date" required></label>
+        <div class="form-actions"><button class="button button--secondary" type="submit">Копировать день</button></div>
+      </form>
+    </section>
+    <section class="card">
+      <div class="card__header"><h2 class="card__title">Копировать неделю</h2></div>
+      <form method="post" class="form-stacked">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="copy_week">
+        <input type="hidden" name="room" value="{{ room.pk }}">
+        <input type="hidden" name="semester" value="{{ semester.pk }}">
+        <label>Неделя-источник (понедельник)<input type="date" name="source_week" required></label>
+        <label>Неделя-назначение (понедельник)<input type="date" name="target_week" required></label>
+        <div class="form-actions"><button class="button button--secondary" type="submit">Копировать неделю</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="grid grid--2">
+    <section class="card">
+      <div class="card__header"><h2 class="card__title">Отменить день</h2></div>
+      <form method="post" class="form-stacked" onsubmit="return confirm('Отменить все слоты комнаты за этот день?');">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="cancel_day">
+        <input type="hidden" name="room" value="{{ room.pk }}">
+        <input type="hidden" name="semester" value="{{ semester.pk }}">
+        <label>День<input type="date" name="day" required></label>
+        <div class="form-actions"><button class="button button--danger" type="submit">Отменить день</button></div>
+      </form>
+    </section>
+    <section class="card">
+      <div class="card__header"><h2 class="card__title">Отменить серию</h2></div>
+      <form method="post" class="form-stacked" onsubmit="return confirm('Отменить серию слотов?');">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="cancel_series">
+        <input type="hidden" name="room" value="{{ room.pk }}">
+        <input type="hidden" name="semester" value="{{ semester.pk }}">
+        <label>Лабораторная работа (необязательно)
+          <select name="lab_work">
+            <option value="">Все работы выбранной комнаты</option>
+            {% for lw in lab_works %}<option value="{{ lw.pk }}">{{ lw }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>С <input type="date" name="from_date" required></label>
+        <label>По <input type="date" name="to_date" required></label>
+        <div class="form-actions"><button class="button button--danger" type="submit">Отменить серию</button></div>
+      </form>
+    </section>
+  </div>
+{% endif %}
+
+<script>
+  document.querySelectorAll('.mode-select').forEach(function(select) {
+    function update() {
+      var target = document.getElementById(select.dataset.target);
+      if (!target) return;
+      target.style.display = select.value === 'GROUP' ? 'block' : 'none';
+    }
+    select.addEventListener('change', update);
+    update();
+  });
+</script>
+{% endblock %}

@@ -81,4 +81,27 @@
     Создайте работу и привяжите её к дисциплине — она появится в редакторе расписания.
   </div>
 {% endif %}
+
+<section class="card">
+  <div class="card__header">
+    <h2 class="card__title">Открытие записи на работы</h2>
+  </div>
+  {% if release_rows %}
+    {% for row in release_rows %}
+      <form method="post" class="form-row form-row--release">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="release">
+        <input type="hidden" name="lab_work" value="{{ row.lab_work.pk }}">
+        <input type="hidden" name="semester" value="{{ row.discipline.semester_id }}">
+        <span class="form-row__label">{{ row.lab_work.title }} — {{ row.discipline.title }}</span>
+        <span class="muted">{{ row.discipline.semester }}</span>
+        <input type="datetime-local" name="booking_opens_at" value="{{ row.opens_at }}">
+        <button class="button button--sm" type="submit">Сохранить</button>
+        <button class="button button--secondary button--sm" type="submit" name="booking_opens_at" value="">Сбросить</button>
+      </form>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Нет опубликованных работ с привязанными дисциплинами.</p>
+  {% endif %}
+</section>
 {% endblock %}
