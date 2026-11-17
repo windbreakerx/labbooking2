@@ -208,9 +208,9 @@ class Meta:
 
 ### Фаза 4. Автопосещение и qcluster
 
-- [ ] Добавить `apps/bookings/tasks.py` с `mark_visited_task`.
-- [ ] Настроить `django-q2 Schedule` на запуск в 20:00 МСК.
-- [ ] Убедиться, что контейнер `scheduler` запускает `qcluster`.
+- [x] Добавить `apps/bookings/tasks.py` с `mark_visited_task`.
+- [x] Настроить `django-q2 Schedule` на запуск в 20:00 МСК.
+- [x] Убедиться, что контейнер `scheduler` запускает `qcluster`.
 
 ### Фаза 5. Отчётность и аналитика
 
@@ -260,4 +260,4 @@ class Meta:
 
 ## 6. Следующий шаг
 
-Переходить к **Фазе 4: Автопосещение и qcluster**.
+Переходить к **Фазе 5: Отчётность и аналитика**.
