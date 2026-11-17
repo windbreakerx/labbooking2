@@ -8,7 +8,7 @@ from django.db.utils import OperationalError
 from django.test import override_settings
 from django.utils import timezone
 
-from apps.academics.models import Discipline, StudentGroup
+from apps.academics.models import Discipline
 from apps.bookings.models import (
     NO_SHOW_EXPLANATION_THRESHOLD,
     BookingStatus,
@@ -36,13 +36,10 @@ from apps.scheduling.models import (
     LabSessionStatus,
     LabStand,
     Room,
-    ScheduleEntry,
     TrainingCenter,
 )
-from apps.users.models import User, UserProfile, UserRole
 
 from .conftest import (
-    attach_schedule_entry_lab_works,
     create_lab_work,
     create_schedule_entry_for_session,
     make_student,
@@ -663,138 +660,6 @@ class TestSessionAvailability:
         assert session in sessions
         assert far_session not in sessions
 
-    def test_bookable_sessions_follow_schedule_whitelist(self, lab_work, room, semester):
-        starts = next_open_weekday_pair(days_ahead=3, hour=10, minute=35)
-        blocked_session = LabSession.objects.create(
-            lab_work=lab_work,
-            room=room,
-            semester=semester,
-            starts_at=starts,
-            ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=2,
-            status=LabSessionStatus.OPEN,
-        )
-        sessions = catalog_sessions(lab_work.pk)
-        assert blocked_session not in sessions
-
-        entry = ScheduleEntry.objects.create(
-            room=room,
-            semester=semester,
-            week_parity="BOTH",
-            weekday=timezone.localtime(starts).weekday(),
-            start_time=timezone.localtime(starts).strftime("%H:%M"),
-            duration_minutes=90,
-            capacity=room.capacity,
-            duty_role="TEACHER_DUTY",
-            is_active=True,
-        )
-        attach_schedule_entry_lab_works(entry, lab_work)
-        sessions = catalog_sessions(lab_work.pk)
-        assert blocked_session in sessions
-
-    def test_schedule_whitelist_allows_offset_start_within_entry_window(
-        self, lab_work, room, semester
-    ):
-        starts = next_open_weekday_pair(days_ahead=3, hour=11, minute=5)
-        offset_session = LabSession.objects.create(
-            lab_work=lab_work,
-            room=room,
-            semester=semester,
-            starts_at=starts,
-            ends_at=starts + timezone.timedelta(minutes=60),
-            capacity=2,
-            status=LabSessionStatus.OPEN,
-        )
-        entry = ScheduleEntry.objects.create(
-            room=room,
-            semester=semester,
-            week_parity="BOTH",
-            weekday=timezone.localtime(starts).weekday(),
-            start_time="10:35",
-            duration_minutes=90,
-            capacity=room.capacity,
-            duty_role="TEACHER_DUTY",
-            is_active=True,
-        )
-        attach_schedule_entry_lab_works(entry, lab_work)
-
-        sessions = catalog_sessions(lab_work.pk)
-        assert offset_session in sessions
-
-    def test_empty_selection_means_all_lab_works_of_discipline(self, lab_work, room, semester):
-        """Пустая выборка ЛР в слоте расписания = разрешены все ЛР дисциплины."""
-        starts = next_open_weekday_pair(days_ahead=3, hour=10, minute=35)
-        sess = LabSession.objects.create(
-            lab_work=lab_work,
-            room=room,
-            semester=semester,
-            starts_at=starts,
-            ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=2,
-            status=LabSessionStatus.OPEN,
-        )
-        entry = ScheduleEntry.objects.create(
-            room=room,
-            semester=semester,
-            week_parity="BOTH",
-            weekday=timezone.localtime(starts).weekday(),
-            start_time=timezone.localtime(starts).strftime("%H:%M"),
-            duration_minutes=90,
-            capacity=room.capacity,
-            is_active=True,
-        )
-        from apps.scheduling.models import ScheduleEntryDisciplineSelection
-
-        ScheduleEntryDisciplineSelection.objects.create(
-            schedule_entry=entry, discipline=lab_work.disciplines.first()
-        )  # без lab_works
-
-        sessions = catalog_sessions(lab_work.pk)
-        assert sess in sessions
-
-    def test_teacher_load_group_restricts_student_visibility(
-        self, student, lab_work, room, semester
-    ):
-        starts = next_open_weekday_pair(days_ahead=3, hour=12, minute=35)
-        restricted_session = LabSession.objects.create(
-            lab_work=lab_work,
-            room=room,
-            semester=semester,
-            starts_at=starts,
-            ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=2,
-            status=LabSessionStatus.OPEN,
-        )
-        entry = ScheduleEntry.objects.create(
-            room=room,
-            semester=semester,
-            week_parity="BOTH",
-            weekday=timezone.localtime(starts).weekday(),
-            start_time=timezone.localtime(starts).strftime("%H:%M"),
-            duration_minutes=90,
-            capacity=room.capacity,
-            duty_role="TEACHER_DUTY",
-            load_group_label="TEST-24",
-            is_active=True,
-        )
-        attach_schedule_entry_lab_works(entry, lab_work)
-
-        foreign_group = StudentGroup.objects.create(name="FOREIGN-24")
-        foreign_group.disciplines.add(*student.profile.student_group.disciplines.all())
-        outsider = User.objects.create_user(
-            email="other-whitelist@stud.spmi.ru",
-            password="pass",
-            first_name="Other",
-            last_name="Student",
-            role=UserRole.STUDENT,
-        )
-        UserProfile.objects.create(user=outsider, student_group=foreign_group)
-
-        student_sessions = catalog_sessions(lab_work.pk, student=student)
-        outsider_sessions = catalog_sessions(lab_work.pk, student=outsider)
-        assert restricted_session in student_sessions
-        assert restricted_session not in outsider_sessions
-
     def test_booking_window_does_not_shift_by_time_of_day(self):
         tz = timezone.get_current_timezone()
         now_early = timezone.make_aware(datetime(2026, 7, 1, 14, 0), tz)
@@ -978,43 +843,6 @@ class TestSessionAvailability:
         assert count == 1
         assert booking.current_status == BookingStatus.VISITED
         assert session.status == LabSessionStatus.CLOSED
-
-    def test_weekend_sessions_bookable_only_with_schedule(self, lab_work, room, semester):
-        weekday_pair = next_open_weekday_pair(days_ahead=3, hour=10, minute=35)
-        weekend_pair = weekday_pair
-        while weekend_pair.weekday() != 5:
-            weekend_pair += timezone.timedelta(days=1)
-        non_pair_weekday = weekday_pair.replace(hour=11, minute=0)
-
-        s1 = LabSession.objects.create(
-            lab_work=lab_work, room=room, semester=semester,
-            starts_at=weekday_pair, ends_at=weekday_pair + timezone.timedelta(minutes=90),
-            capacity=2, status=LabSessionStatus.OPEN,
-        )
-        s2 = LabSession.objects.create(
-            lab_work=lab_work, room=room, semester=semester,
-            starts_at=weekend_pair, ends_at=weekend_pair + timezone.timedelta(minutes=90),
-            capacity=2, status=LabSessionStatus.OPEN,
-        )
-        s3 = LabSession.objects.create(
-            lab_work=lab_work, room=room, semester=semester,
-            starts_at=non_pair_weekday, ends_at=non_pair_weekday + timezone.timedelta(minutes=90),
-            capacity=2, status=LabSessionStatus.OPEN,
-        )
-        s4 = LabSession.objects.create(
-            lab_work=lab_work, room=room, semester=semester,
-            starts_at=weekend_pair.replace(hour=12, minute=35),
-            ends_at=weekend_pair.replace(hour=12, minute=35) + timezone.timedelta(minutes=90),
-            capacity=2, status=LabSessionStatus.OPEN,
-        )
-        create_schedule_entry_for_session(s1, lab_work=lab_work)
-        create_schedule_entry_for_session(s4, lab_work=lab_work)
-
-        sessions = catalog_sessions(lab_work.pk)
-        assert s1 in sessions
-        assert s2 not in sessions
-        assert s3 not in sessions
-        assert s4 in sessions
 
     def test_offset_interval_inside_pair_is_bookable(self):
         offset_start = next_open_weekday_pair(days_ahead=3, hour=11, minute=35)

@@ -22,10 +22,6 @@
     <label for="rf-capacity">Вместимость</label>
     <input type="number" name="capacity" id="rf-capacity" min="1" value="{{ edit_room.capacity|default:30 }}">
     <label class="form-grid__check">
-      <input type="checkbox" name="is_excluded_from_autogen"{% if edit_room.is_excluded_from_autogen %} checked{% endif %}>
-      исключить из автогенерации слотов
-    </label>
-    <label class="form-grid__check">
       <input type="checkbox" name="is_blocked"{% if edit_room.is_blocked %} checked{% endif %}>
       заблокировать (будущие слоты будут отменены)
     </label>
@@ -49,7 +45,6 @@
             <td>{{ item.capacity }}</td>
             <td>
               {% if item.is_blocked %}<span class="badge badge--warning">заблокирована</span>
-              {% elif item.is_excluded_from_autogen %}<span class="badge badge--muted">вне автогенерации</span>
               {% else %}<span class="badge badge--open">активна</span>{% endif %}
             </td>
             <td><a class="button button--secondary button--sm" href="?edit={{ item.pk }}">Изменить</a></td>

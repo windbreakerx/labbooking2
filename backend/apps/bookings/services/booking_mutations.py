@@ -23,9 +23,9 @@ STATUSES_WITHOUT_STAFF_NOTE = frozenset({BookingStatus.NO_SHOW, BookingStatus.RE
 STATUS_TRANSITIONS: dict[str, set[str]] = {
     BookingStatus.BOOKED: {BookingStatus.VISITED, BookingStatus.NO_SHOW, BookingStatus.REACCESS},
     BookingStatus.NO_SHOW: {BookingStatus.REACCESS, BookingStatus.VISITED},
+    BookingStatus.REACCESS: {BookingStatus.VISITED},
 }
 TERMINAL_STATUSES = {
-    BookingStatus.REACCESS,
     BookingStatus.VISITED,
     BookingStatus.CANCELLED,
     BookingStatus.SLOT_CANCELLED,
@@ -161,8 +161,8 @@ class BookingMutationsMixin:
         laboratory = resolve_booking_laboratory(booking)
         correcting_no_show = (
             new_status == BookingStatus.VISITED
-            and booking.current_status == BookingStatus.NO_SHOW
             and booking.had_no_show
+            and booking.current_status in (BookingStatus.NO_SHOW, BookingStatus.REACCESS)
         )
         explanation_just_required = False
         if new_status == BookingStatus.NO_SHOW and not booking.had_no_show:

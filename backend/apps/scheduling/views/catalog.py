@@ -1,8 +1,8 @@
 """Управление каталогом лаборатории (день 7): аудитории и лабораторные работы.
 
 Каскады: блокировка аудитории отменяет её будущие слоты (записи студентов →
-SLOT_CANCELLED), разблокировка — регенерирует; изменение мест/длительности ЛР
-синхронизирует открытые слоты (bookings/services/schedule_sync.py).
+SLOT_CANCELLED); изменение длительности ЛР синхронизирует открытые слоты
+(apps/scheduling/services/session_admin.py).
 """
 
 from django.contrib import messages
@@ -10,12 +10,8 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View
 
-from apps.academics.models import ALLOWED_LAB_DURATIONS, Semester
+from apps.academics.models import ALLOWED_LAB_DURATIONS
 from apps.bookings.services.booking import BookingService
-from apps.bookings.services.schedule_sync import (
-    sync_open_session_capacities,
-    sync_open_session_durations,
-)
 from apps.scheduling.models import LabSession, LabSessionStatus
 from apps.scheduling.services.catalog_admin import (
     CatalogError,
@@ -25,7 +21,7 @@ from apps.scheduling.services.catalog_admin import (
     update_lab_work,
     update_room,
 )
-from apps.scheduling.services.slot_generation import generate_lab_sessions
+from apps.scheduling.services.session_admin import update_future_session_durations
 from apps.scheduling.views.portal import PortalLaboratoryMixin
 
 DURATION_CHOICES = tuple((value, f"{value} мин") for value in ALLOWED_LAB_DURATIONS)
@@ -73,10 +69,7 @@ class LabHeadRoomUpdateView(PortalLaboratoryMixin, View):
                 f"Аудитория №{room.number} заблокирована, отменено будущих слотов: {cancelled}.",
             )
         elif was_blocked and not room.is_blocked:
-            semester = Semester.objects.filter(is_active=True).first()
-            if semester is not None:
-                generate_lab_sessions(semester=semester)
-            messages.success(request, f"Аудитория №{room.number} разблокирована — слоты будут сгенерированы.")
+            messages.success(request, f"Аудитория №{room.number} разблокирована.")
         else:
             messages.success(request, f"Аудитория №{room.number} обновлена.")
         return redirect("lab-head-rooms")
@@ -138,20 +131,14 @@ class LabHeadLabWorkUpdateView(PortalLaboratoryMixin, View):
         if lab_work is None:
             messages.error(request, "Работа не найдена в вашей лаборатории.")
             return redirect("lab-head-lab-works")
-        old_capacity = lab_work.capacity
         old_duration = lab_work.duration_minutes
         try:
             lab_work = update_lab_work(laboratory=self.laboratory, lab_work=lab_work, data=request.POST)
         except CatalogError as exc:
             messages.error(request, str(exc))
             return redirect("lab-head-lab-works")
-        if lab_work.capacity != old_capacity:
-            updated = sync_open_session_capacities(lab_work)
-            messages.success(
-                request, f"Работа обновлена, вместимость синхронизирована со слотами: {updated}."
-            )
-        elif lab_work.duration_minutes != old_duration:
-            updated = sync_open_session_durations(lab_work)
+        if lab_work.duration_minutes != old_duration:
+            updated = update_future_session_durations(lab_work)
             messages.success(request, f"Работа обновлена, длительность синхронизирована со слотами: {updated}.")
         else:
             messages.success(request, f"Работа «{lab_work.title}» обновлена.")

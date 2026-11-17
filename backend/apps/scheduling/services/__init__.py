@@ -6,10 +6,6 @@ from apps.scheduling.services.binding import (
     faculty_matches,
     unbind,
 )
-from apps.scheduling.services.slot_generation import (
-    generate_lab_sessions,
-    generated_session_capacity,
-)
 
 __all__ = [
     "BindingError",
@@ -18,6 +14,4 @@ __all__ = [
     "can_bind",
     "faculty_matches",
     "unbind",
-    "generate_lab_sessions",
-    "generated_session_capacity",
 ]

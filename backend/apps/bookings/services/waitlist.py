@@ -13,7 +13,8 @@ from apps.bookings.models import AuditLog, BookingStatus, WaitlistEntry
 from apps.bookings.notifications import notify_waitlist_event
 from apps.bookings.services.errors import BookingError
 from apps.bookings.services.retry import retry_on_deadlock
-from apps.scheduling.models import LabSession
+from apps.bookings.services.session_availability import can_student_book_session
+from apps.scheduling.models import LabSession, LabSessionBookingMode, LabSessionStatus
 from apps.users.models import UserRole
 
 _NOTIFY_RELATED = ("student", "lab_session", "lab_session__lab_work", "lab_session__room")
@@ -32,10 +33,16 @@ def _join_waitlist_with_retry(student, session_id):
 
 def _join_waitlist_impl(student, session_id) -> WaitlistEntry:
     session = LabSession.objects.select_for_update(of=("self",)).get(pk=session_id)
+    if session.status != LabSessionStatus.OPEN:
+        raise BookingError("Слот недоступен для записи.")
+    if session.booking_mode == LabSessionBookingMode.GROUP:
+        raise BookingError("Групповой слот недоступен для очереди.")
     if student.role == UserRole.STUDENT and not student_can_access_lab_work(
         student, session.lab_work_id
     ):
         raise BookingError("Лабораторная работа недоступна для вашей группы.")
+    if not can_student_book_session(student, session):
+        raise BookingError("Запись на этот слот сейчас недоступна.")
     if session.bookings.filter(current_status=BookingStatus.BOOKED).count() < session.capacity:
         raise BookingError("В слоте есть свободные места — запишитесь напрямую.")
     if WaitlistEntry.objects.filter(lab_session=session, student=student).exists():

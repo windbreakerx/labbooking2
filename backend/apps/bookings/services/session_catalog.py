@@ -14,16 +14,17 @@ from django.utils import timezone
 from apps.bookings.models import Booking, BookingStatus
 from apps.bookings.services.seat_capacity import seats_available
 from apps.bookings.services.session_availability import (
-    ScheduleWhitelistIndex,
     booking_date_window,
     booking_window_configs,
     is_before_restriction_deadline,
+    is_booking_release_open,
     is_day_open_for_booking,
     is_pair_time_for_booking,
+    is_session_allowed_for_student_group,
     is_session_in_manual_booking_window,
     manual_booking_max_date,
 )
-from apps.scheduling.models import Holiday, LabSession, LabSessionStatus
+from apps.scheduling.models import Holiday, LabSession, LabSessionBookingMode, LabSessionStatus
 from apps.users.models import User
 
 
@@ -49,6 +50,7 @@ def student_bookable_slots(
     qs = (
         LabSession.objects.filter(
             status=LabSessionStatus.OPEN,
+            booking_mode=LabSessionBookingMode.INDIVIDUAL,
             starts_at__gt=moment,
             starts_at__date__gte=min_date,
             starts_at__date__lte=max_date,
@@ -66,7 +68,6 @@ def student_bookable_slots(
         return []
     configs = booking_window_configs({session.room.laboratory_id for session in sessions})
     counters = _seat_counters(sessions)
-    whitelist = ScheduleWhitelistIndex(sessions)
     busy_intervals = _student_busy_intervals(student)
     slots: list[SessionSlot] = []
     for session in sessions:
@@ -78,9 +79,11 @@ def student_bookable_slots(
             continue
         if not is_before_restriction_deadline(session.starts_at, moment, config=config):
             continue
-        if _overlaps_any_interval(session, busy_intervals):
+        if not is_booking_release_open(session.lab_work_id, session.semester_id, moment):
             continue
-        if not whitelist.allows(session, student=student):
+        if not is_session_allowed_for_student_group(session, student):
+            continue
+        if _overlaps_any_interval(session, busy_intervals):
             continue
         counter = counters[session.pk]
         available = _session_available_seats(session, counter)

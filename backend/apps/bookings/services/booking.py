@@ -25,15 +25,12 @@ from apps.bookings.services.errors import BookingError
 from apps.bookings.services.retry import retry_on_deadlock
 from apps.bookings.services.seat_capacity import seat_remainings, session_seat_counts
 from apps.bookings.services.session_availability import (
-    booking_date_window,
-    is_before_restriction_deadline,
-    is_day_open_for_booking,
+    can_student_book_session,
     is_manual_session_time_allowed,
     is_pair_time_for_booking,
     manual_booking_max_date,
-    session_matches_schedule_whitelist,
 )
-from apps.scheduling.models import Holiday, LabSession, LabSessionStatus
+from apps.scheduling.models import Holiday, LabSession, LabSessionBookingMode, LabSessionStatus
 from apps.users.models import User, UserRole
 from apps.users.roles import staff_can_modify_bookings
 
@@ -94,6 +91,8 @@ class BookingService(BookingMutationsMixin):
     # --- Окна записи ---------------------------------------------------------
 
     def _assert_slot_bookable(self, session: LabSession, session_local_date):
+        if session.booking_mode == LabSessionBookingMode.GROUP:
+            raise BookingError("Групповой слот недоступен для самостоятельной записи.")
         if not is_pair_time_for_booking(session.starts_at):
             raise BookingError("Запись доступна только на университетские пары.")
         if session.status != LabSessionStatus.OPEN:
@@ -110,18 +109,8 @@ class BookingService(BookingMutationsMixin):
     ):
         now = timezone.now()
         session_local_date = timezone.localtime(session.starts_at).date()
-        laboratory_id = session.room.laboratory_id
         if not skip_student_rules:
-            if not is_day_open_for_booking(session_local_date, now, laboratory_id=laboratory_id):
-                min_date, max_date = booking_date_window(now, laboratory_id=laboratory_id)
-                raise BookingError(
-                    f"Запись сейчас открыта на даты с {min_date:%d.%m.%Y} по {max_date:%d.%m.%Y}. "
-                    "Если у лаборатории включено ограничение по времени, "
-                    "запись на следующий день закрывается заранее."
-                )
-            if not is_before_restriction_deadline(session.starts_at, now, laboratory_id=laboratory_id):
-                raise BookingError("Время записи на выбранный день уже истекло.")
-            if not session_matches_schedule_whitelist(session, student=student):
+            if not can_student_book_session(student, session, now):
                 raise BookingError("Слот недоступен для записи.")
         if session.starts_at <= now:
             raise BookingError("Нельзя записаться на прошедший слот.")
@@ -190,19 +179,27 @@ class BookingService(BookingMutationsMixin):
 
     # --- Создание записи -------------------------------------------------------
 
-    def _check_discipline_limit(self, student: User, discipline_id: int, lab_work_id: int):
+    def _check_lab_work_and_discipline_limits(self, student: User, discipline_id: int, lab_work):
         if Booking.objects.filter(
             student=student,
             discipline_id=discipline_id,
             current_status__in=ACTIVE_STATUSES,
         ).exists():
             raise BookingError("Уже есть активная запись по этой дисциплине.")
-        if Booking.objects.filter(
+        visited_count = Booking.objects.filter(
             student=student,
-            lab_work_id=lab_work_id,
+            lab_work=lab_work,
             current_status=BookingStatus.VISITED,
-        ).exists():
-            raise BookingError("Вы уже посетили эту лабораторную работу.")
+        ).count()
+        if visited_count >= lab_work.required_sessions:
+            raise BookingError("Лабораторная работа уже выполнена.")
+        active_count = Booking.objects.filter(
+            student=student,
+            lab_work=lab_work,
+            current_status__in=ACTIVE_STATUSES,
+        ).count()
+        if active_count >= lab_work.required_sessions:
+            raise BookingError("Достигнут лимит активных записей на эту лабораторную работу.")
 
     def create_booking(
         self,
@@ -291,7 +288,7 @@ class BookingService(BookingMutationsMixin):
         if manual:
             self._validate_manual_booking_rules(student, session)
         elif not skip_student_rules:
-            self._check_discipline_limit(student, booking_discipline.pk, session.lab_work_id)
+            self._check_lab_work_and_discipline_limits(student, booking_discipline.pk, session.lab_work)
             if self._student_overlap_bookings(student, session).exists():
                 raise BookingError("У вас уже есть запись на пересекающееся время.")
             self._enforce_capacity_limits(session)

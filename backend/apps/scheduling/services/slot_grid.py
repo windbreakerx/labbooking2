@@ -8,8 +8,6 @@
 
 from datetime import date, time, timedelta
 
-from apps.scheduling.models import WeekParity
-
 UNIVERSITY_PAIR_SLOTS = [
     (1, time(8, 50), time(10, 20)),
     (2, time(10, 35), time(12, 5)),
@@ -54,4 +52,4 @@ def academic_week_parity(value: date) -> str:
     september_first = date(year, 9, 1)
     week_one_monday = september_first - timedelta(days=september_first.weekday())
     week_number = (value - week_one_monday).days // 7 + 1
-    return WeekParity.ODD if week_number % 2 == 1 else WeekParity.EVEN
+    return "ODD" if week_number % 2 == 1 else "EVEN"

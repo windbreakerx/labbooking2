@@ -17,11 +17,12 @@ from apps.bookings.services.session_availability import (
     booking_window_config,
     booking_window_configs,
     is_before_restriction_deadline,
+    is_booking_release_open,
     is_day_open_for_booking,
     is_pair_time_for_booking,
+    is_session_allowed_for_student_group,
     is_session_in_manual_booking_window,
     manual_booking_max_date,
-    session_matches_schedule_whitelist,
 )
 from apps.bookings.services.session_catalog import staff_manual_slots, student_bookable_slots
 from apps.scheduling.models import (
@@ -219,7 +220,11 @@ class TestStudentCatalog:
                     start < session.ends_at and end > session.starts_at for start, end in busy
                 ):
                     continue
-                if not session_matches_schedule_whitelist(session, student=who):
+                if not is_booking_release_open(
+                    session.lab_work_id, session.semester_id, now
+                ):
+                    continue
+                if not is_session_allowed_for_student_group(session, who):
                     continue
                 available = session_available_seats(session)
                 if available <= 0:
@@ -238,7 +243,6 @@ class TestStudentCatalog:
         assert world["s_busy"].pk not in student_ids  # своя бронь
         assert world["s_hidden"].pk not in student_ids  # пересечение с ней
         assert world["s_b2"].pk not in student_ids  # горизонт лаборатории B
-        assert world["s_a2"].pk not in student_ids  # нет записи расписания
         assert world["s_c2"].pk not in student_ids  # аудитория исчерпана пересечением
         assert world["s_d2"].pk not in student_ids  # стенд занят другой ЛР
         assert results["student"][world["s_a1"].pk] == (1, 2)

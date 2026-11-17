@@ -1,8 +1,8 @@
 """Минимальный CRUD каталога лаборатории (день 7): аудитории и лабораторные работы.
 
-Комнаты: только базовые поля и флаги ``is_excluded_from_autogen``/``is_blocked``
+Комнаты: только базовые поля и флаг ``is_blocked``
 (дисциплины комнаты, фото и дежурный по умолчанию — срез этапа, есть в админке).
-Каскады блокировки/разблокировки и sync capacity/duration ЛР orchestrated
+Каскады блокировки/разблокировки и sync duration ЛР orchestrated
 во view (apps/scheduling/views/catalog.py) — сервис не зависит от bookings.
 """
 
@@ -33,7 +33,6 @@ def _clean_room_payload(laboratory: Laboratory, data, *, room: Room | None = Non
         "name": name,
         "capacity": capacity,
         "is_blocked": data.get("is_blocked") == "on",
-        "is_excluded_from_autogen": data.get("is_excluded_from_autogen") == "on",
     }
 
 

@@ -1,29 +1,26 @@
-"""Доступность слотов: окна записи, whitelist расписания, авто-«Посетил».
+"""Доступность слотов: окна записи, релизы, групповые ограничения, авто-«Посетил».
 
-Порт из v1 (971 строк) без каскадных опций визарда — те вернутся в День 6
-вместе со студенческим UI. Сетка пар и чётность недель —
-scheduling/services/slot_grid.py; математика мест — seat_capacity.py,
-векторизованный каталог — session_catalog.py.
+Старый whitelist расписания (ScheduleEntry) удалён — теперь слот сам
+определяет свою бронируемость: статус OPEN, групповые ограничения и
+открытие записи через LabWorkBookingRelease.
 """
 
 from collections.abc import Iterable
 from datetime import datetime, time, timedelta
 
 from django.conf import settings
-from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import Prefetch
 from django.utils import timezone
 
+from apps.academics.models import LabWorkBookingRelease
+from apps.academics.scope import resolve_student_group
 from apps.scheduling.models import (
     AutoVisitedMode,
     Holiday,
     LaboratoryBookingSettings,
     LabSession,
-    ScheduleDutyRole,
-    ScheduleEntry,
-    ScheduleEntryDisciplineSelection,
+    LabSessionBookingMode,
+    LabSessionStatus,
 )
-from apps.scheduling.services.entry_match import entry_matches_session
 from apps.scheduling.services.slot_grid import (
     BOOKING_START_GRID_MINUTES,
     UNIVERSITY_PAIR_SLOTS,
@@ -247,74 +244,61 @@ def is_session_in_manual_booking_window(
     return session_local_date not in holiday_dates
 
 
-# --- Whitelist расписания -------------------------------------------------------
+# --- Релизы записи и групповые ограничения ------------------------------------
 
 
-def _student_group_label(student) -> str:
-    try:
-        profile = student.profile
-    except (AttributeError, ObjectDoesNotExist):
-        return ""
-    if profile.student_group_id:
-        return (profile.student_group.name or "").strip()
-    return (profile.group_name or "").strip()
+def booking_release_for(lab_work_id: int, semester_id: int) -> LabWorkBookingRelease | None:
+    return LabWorkBookingRelease.objects.filter(
+        lab_work_id=lab_work_id, semester_id=semester_id
+    ).first()
 
 
-class ScheduleWhitelistIndex:
-    """Активные записи расписания для набора слотов — одним блоком запросов.
-
-    Слот видим, если совпадает с активной записью расписания (день недели,
-    чётность, время в пределах записи, ЛР среди разрешённых). Записи
-    TEACHER_DUTY с группой по нагрузке видны только этой группе.
-    """
-
-    def __init__(self, sessions: Iterable[LabSession]):
-        self._by_slot: dict[tuple[int, int, int], list[ScheduleEntry]] = {}
-        sessions = list(sessions)
-        if not sessions:
-            return
-        selections_qs = ScheduleEntryDisciplineSelection.objects.select_related(
-            "discipline"
-        ).prefetch_related("lab_works", "discipline__lab_works")
-        entries = (
-            ScheduleEntry.objects.filter(
-                is_active=True,
-                room_id__in={session.room_id for session in sessions},
-                semester_id__in={session.semester_id for session in sessions},
-            )
-            .prefetch_related(Prefetch("discipline_selections", queryset=selections_qs))
-            .order_by("pk")
-        )
-        for entry in entries:
-            self._by_slot.setdefault(
-                (entry.room_id, entry.semester_id, entry.weekday), []
-            ).append(entry)
-
-    def allows(self, session: LabSession, *, student=None) -> bool:
-        local_start = timezone.localtime(session.starts_at)
-        candidates = self._by_slot.get(
-            (session.room_id, session.semester_id, local_start.weekday()), []
-        )
-        matched = [entry for entry in candidates if entry_matches_session(entry, session)]
-        if not matched:
-            return False
-        if student is None:
-            return True
-        unrestricted = [
-            entry
-            for entry in matched
-            if not (entry.duty_role == ScheduleDutyRole.TEACHER_DUTY and entry.load_group_label.strip())
-        ]
-        if unrestricted:
-            return True
-        group_label = _student_group_label(student)
-        restricted_groups = {
-            entry.load_group_label.strip()
-            for entry in matched
-            if entry.duty_role == ScheduleDutyRole.TEACHER_DUTY
-        }
-        return bool(group_label) and group_label in restricted_groups
+def is_booking_release_open(
+    lab_work_id: int, semester_id: int, now: datetime | None = None
+) -> bool:
+    """Запись открыта, если существует release и booking_opens_at <= now (not NULL)."""
+    release = booking_release_for(lab_work_id, semester_id)
+    if release is None or release.booking_opens_at is None:
+        return False
+    return (now or timezone.now()) >= release.booking_opens_at
 
 
-def session_matches_schedule_whitelist(session: LabSession, *, student=None) -> bool:
-    return ScheduleWhitelistIndex([session]).allows(session, student=student)
+def is_session_allowed_for_student_group(session: LabSession, student) -> bool:
+    """Слот доступен студенту по группе: пустой allowed = все; иначе группа в списке."""
+    allowed_ids = set(session.allowed_student_groups.values_list("pk", flat=True))
+    if not allowed_ids:
+        return True
+    student_group = resolve_student_group(student)
+    return student_group is not None and student_group.pk in allowed_ids
+
+
+def can_student_book_session(
+    student,
+    session: LabSession,
+    now: datetime | None = None,
+    *,
+    config: dict | None = None,
+) -> bool:
+    """Полная проверка бронируемости слота для студента (кроме лимитов и мест)."""
+    moment = now or timezone.now()
+    if session.status != LabSessionStatus.OPEN:
+        return False
+    if session.booking_mode == LabSessionBookingMode.GROUP:
+        return False
+    if session.starts_at <= moment:
+        return False
+    session_local_date = timezone.localtime(session.starts_at).date()
+    if Holiday.objects.filter(date=session_local_date).exists():
+        return False
+    if not is_pair_time_for_booking(session.starts_at):
+        return False
+    cfg = config or booking_window_config(session.room.laboratory_id)
+    if not is_day_open_for_booking(session_local_date, moment, config=cfg):
+        return False
+    if not is_before_restriction_deadline(session.starts_at, moment, config=cfg):
+        return False
+    if not is_booking_release_open(session.lab_work_id, session.semester_id, moment):
+        return False
+    if not is_session_allowed_for_student_group(session, student):
+        return False
+    return True

@@ -5,14 +5,12 @@ from datetime import datetime, time
 import pytest
 from django.utils import timezone
 
-from apps.academics.models import Discipline, LabWork, Semester, StudentGroup
+from apps.academics.models import Discipline, LabWork, LabWorkBookingRelease, Semester, StudentGroup
 from apps.scheduling.models import (
     Laboratory,
     LabSession,
     LabSessionStatus,
     Room,
-    ScheduleEntry,
-    ScheduleEntryDisciplineSelection,
     TrainingCenter,
 )
 from apps.users.models import User, UserProfile, UserRole
@@ -25,38 +23,26 @@ def create_lab_work(*disciplines, **kwargs) -> LabWork:
     return lab_work
 
 
-def attach_schedule_entry_lab_works(entry: ScheduleEntry, *lab_works) -> None:
-    """Явные выборки ЛР слота по дисциплинам (whitelist расписания)."""
-    for lab_work in lab_works:
-        discipline = lab_work.disciplines.first()
-        selection = ScheduleEntryDisciplineSelection.objects.create(
-            schedule_entry=entry,
-            discipline=discipline,
-        )
-        selection.lab_works.set([lab_work])
-
-
-def create_schedule_entry_for_session(session, *, lab_work=None, **overrides) -> ScheduleEntry:
-    """Активная запись расписания, разрешающая слот в whitelist каталога."""
+def open_booking_release_for_session(session, *, lab_work=None) -> LabWorkBookingRelease:
+    """Открыть запись на лабораторную работу в семестре слота (для тестов)."""
     lab_work = lab_work or session.lab_work
-    local_start = timezone.localtime(session.starts_at)
-    duration_minutes = overrides.pop(
-        "duration_minutes",
-        int((session.ends_at - session.starts_at).total_seconds() // 60),
-    )
-    entry = ScheduleEntry.objects.create(
-        room=session.room,
+    release, _ = LabWorkBookingRelease.objects.get_or_create(
+        lab_work=lab_work,
         semester=session.semester,
-        week_parity=overrides.pop("week_parity", "BOTH"),
-        weekday=overrides.pop("weekday", local_start.weekday()),
-        start_time=overrides.pop("start_time", local_start.strftime("%H:%M")),
-        duration_minutes=duration_minutes,
-        capacity=overrides.pop("capacity", session.room.capacity),
-        is_active=overrides.pop("is_active", True),
-        **overrides,
+        defaults={"booking_opens_at": timezone.now() - timezone.timedelta(days=1)},
     )
-    attach_schedule_entry_lab_works(entry, lab_work)
-    return entry
+    if release.booking_opens_at is None or release.booking_opens_at > timezone.now():
+        release.booking_opens_at = timezone.now() - timezone.timedelta(days=1)
+        release.save(update_fields=["booking_opens_at"])
+    return release
+
+
+def create_schedule_entry_for_session(session, *, lab_work=None, **overrides):
+    """Заглушка для старого хелпера: теперь просто открывает release.
+
+    Параметры ``overrides`` игнорируются — оставлены для совместимости тестов.
+    """
+    return open_booking_release_for_session(session, lab_work=lab_work)
 
 
 @pytest.fixture(autouse=True)

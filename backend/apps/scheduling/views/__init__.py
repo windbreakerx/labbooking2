@@ -19,16 +19,9 @@ from apps.scheduling.views.portal import (
     PortalLaboratoryMixin,
     resolve_portal_laboratory,
 )
-from apps.scheduling.views.schedule import (
-    LabHeadScheduleCopyDayView,
-    LabHeadScheduleCreateView,
-    LabHeadScheduleDeleteView,
-    LabHeadScheduleExportView,
-    LabHeadScheduleUpdateView,
-    LabHeadScheduleView,
-)
 
 __all__ = [
+    "SESSION_ADMIN_LAB",
     "LabDisciplineBindView",
     "LabDisciplineUnbindView",
     "LabHeadBindingsView",
@@ -40,14 +33,7 @@ __all__ = [
     "LabHeadRoomCreateView",
     "LabHeadRoomUpdateView",
     "LabHeadRoomsView",
-    "LabHeadScheduleCopyDayView",
-    "LabHeadScheduleCreateView",
-    "LabHeadScheduleDeleteView",
-    "LabHeadScheduleExportView",
-    "LabHeadScheduleUpdateView",
-    "LabHeadScheduleView",
     "LabSelectView",
     "PortalLaboratoryMixin",
-    "SESSION_ADMIN_LAB",
     "resolve_portal_laboratory",
 ]

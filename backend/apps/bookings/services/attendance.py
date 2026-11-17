@@ -177,7 +177,9 @@ def mark_visited_for_ended_sessions() -> int:
             continue
         if not is_ready_for_auto_visited(session, now, auto_visited_mode=mode):
             continue
-        for booking in session.bookings.filter(current_status=BookingStatus.BOOKED):
+        for booking in session.bookings.filter(
+            current_status__in=(BookingStatus.BOOKED, BookingStatus.REACCESS)
+        ):
             try:
                 service.change_status(booking, BookingStatus.VISITED, note="Автоматически")
                 count += 1

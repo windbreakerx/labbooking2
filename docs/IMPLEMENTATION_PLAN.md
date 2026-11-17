@@ -164,26 +164,26 @@ class Meta:
 
 ### Фаза 2. Сервисы
 
-- [ ] Создать `apps/scheduling/services/session_admin.py`:
+- [x] Создать `apps/scheduling/services/session_admin.py`:
   - `create_session`, `update_session`, `cancel_session`;
   - валидация: ЛР ↔ лаборатория, семестр, сетка пар, стенды, группы, capacity;
   - правила редактирования при активных бронях.
-- [ ] Создать `apps/scheduling/services/session_bulk.py`:
+- [x] Создать `apps/scheduling/services/session_bulk.py`:
   - `create_series` (`NONE`/`WEEKLY`/`BIWEEKLY`, preview, пропуск праздников/дублей);
   - `copy_day`, `copy_week`;
   - `cancel_series`, `cancel_day` (preview + `force`).
-- [ ] Обновить `apps/bookings/services/booking.py`:
+- [x] Обновить `apps/bookings/services/booking.py`:
   - сузить блокировки;
   - проверка `LabWorkBookingRelease`;
   - проверка группы слота;
   - лимит `required_sessions`;
   - автосоздание групповых броней;
   - обновить ручную запись staff.
-- [ ] Обновить `apps/bookings/services/waitlist.py`:
+- [x] Обновить `apps/bookings/services/waitlist.py`:
   - проверка `status=OPEN`, release, группа, окно записи.
-- [ ] Обновить `apps/bookings/services/attendance.py`:
+- [x] Обновить `apps/bookings/services/attendance.py`:
   - автопосещение для `BOOKED` и `REACCESS`.
-- [ ] Удалить:
+- [x] Удалить:
   - `slot_generation.py`,
   - `entry_match.py`,
   - `schedule_admin.py`,
@@ -260,4 +260,4 @@ class Meta:
 
 ## 6. Следующий шаг
 
-Начинать с **Фазы 1: модели и миграции**. После её завершения можно переходить к сервисам и UI.
+Переходить к **Фазе 3: Каталог и портал расписания**.
