@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.bookings.models import BookingStatus, WaitlistEntry
 from apps.bookings.services import BookingService, join_waitlist
+from apps.bookings.services.waitlist import promote_waitlist
 from apps.scheduling.models import LabSession, LabSessionStatus
 
 from .conftest import create_schedule_entry_for_session, make_student
@@ -19,8 +20,8 @@ class TestWaitlist:
         self, student, session, staff, student_group, django_capture_on_commit_callbacks
     ):
         other = make_student("promoted@stud.spmi.ru", student_group)
-        session.capacity = 1
-        session.save(update_fields=["capacity"])
+        session.lab_work.capacity = 1
+        session.lab_work.save(update_fields=["capacity"])
         booking = BookingService(actor=student).create_booking(student, session.pk)
         join_waitlist(other, session.pk)
 
@@ -49,8 +50,8 @@ class TestWaitlist:
         django_capture_on_commit_callbacks,
     ):
         other = make_student("dropped@stud.spmi.ru", student_group)
-        session.capacity = 1
-        session.save(update_fields=["capacity"])
+        session.lab_work.capacity = 1
+        session.lab_work.save(update_fields=["capacity"])
         booking = BookingService(actor=student).create_booking(student, session.pk)
 
         # Пересекающийся слот: у other активная запись на то же время —
@@ -61,7 +62,6 @@ class TestWaitlist:
             semester=semester,
             starts_at=session.starts_at + timezone.timedelta(minutes=15),
             ends_at=session.starts_at + timezone.timedelta(minutes=105),
-            capacity=2,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(overlapping, lab_work=lab_work)
@@ -84,8 +84,8 @@ class TestWaitlist:
         self, student, session, staff, student_group, caplog, django_capture_on_commit_callbacks
     ):
         other = make_student("queued@stud.spmi.ru", student_group)
-        session.capacity = 1
-        session.save(update_fields=["capacity"])
+        session.lab_work.capacity = 1
+        session.lab_work.save(update_fields=["capacity"])
         BookingService(actor=student).create_booking(student, session.pk)
         join_waitlist(other, session.pk)
 
@@ -98,6 +98,72 @@ class TestWaitlist:
         assert not WaitlistEntry.objects.filter(lab_session=session).exists()
         assert not other.bookings.exists()  # промоушена не было — слот отменён
         assert "очередь сброшена" in caplog.text
+
+    def test_join_waitlist_when_room_is_full(
+        self, student, session, room, student_group
+    ):
+        room.capacity = 1
+        room.save(update_fields=["capacity"])
+        BookingService(actor=student).create_booking(student, session.pk)
+        other = make_student("room-wait@stud.spmi.ru", student_group)
+
+        entry = join_waitlist(other, session.pk)
+        assert entry.pk is not None
+
+    def test_two_cancellations_promote_two_waiters(
+        self, student, session, staff, student_group, django_capture_on_commit_callbacks
+    ):
+        second = make_student("second-booked@stud.spmi.ru", student_group)
+        waiter_one = make_student("waiter-one@stud.spmi.ru", student_group)
+        waiter_two = make_student("waiter-two@stud.spmi.ru", student_group)
+        BookingService(actor=student).create_booking(student, session.pk)
+        BookingService(actor=second).create_booking(second, session.pk)
+        join_waitlist(waiter_one, session.pk)
+        join_waitlist(waiter_two, session.pk)
+
+        booking_one = student.bookings.get(lab_session=session)
+        booking_two = second.bookings.get(lab_session=session)
+        with django_capture_on_commit_callbacks(execute=True):
+            service = BookingService(actor=staff)
+            service.cancel_booking(booking_one, by_staff=True, note="Освобождение места")
+            service.cancel_booking(booking_two, by_staff=True, note="Освобождение места")
+
+        assert waiter_one.bookings.filter(
+            lab_session=session, current_status=BookingStatus.BOOKED
+        ).exists()
+        assert waiter_two.bookings.filter(
+            lab_session=session, current_status=BookingStatus.BOOKED
+        ).exists()
+        assert not WaitlistEntry.objects.filter(lab_session=session).exists()
+
+    def test_promotion_skips_entry_removed_by_another_cancellation(
+        self, student, session, staff, student_group, monkeypatch
+    ):
+        second = make_student("skip-second@stud.spmi.ru", student_group)
+        waiter_one = make_student("skip-waiter-1@stud.spmi.ru", student_group)
+        waiter_two = make_student("skip-waiter-2@stud.spmi.ru", student_group)
+        BookingService(actor=student).create_booking(student, session.pk)
+        BookingService(actor=second).create_booking(second, session.pk)
+        join_waitlist(waiter_one, session.pk)
+        join_waitlist(waiter_two, session.pk)
+
+        # Первая запись уже обработана параллельной отменой и удалена.
+        WaitlistEntry.objects.filter(lab_session=session, student=waiter_one).delete()
+        booking = student.bookings.get(lab_session=session)
+        booking.current_status = BookingStatus.CANCELLED
+        booking.save(update_fields=["current_status"])
+
+        events = []
+        monkeypatch.setattr(
+            "apps.bookings.services.waitlist.notify_waitlist_event",
+            lambda entry, event: events.append(event),
+        )
+        promote_waitlist(session.pk)
+
+        assert waiter_two.bookings.filter(
+            lab_session=session, current_status=BookingStatus.BOOKED
+        ).exists()
+        assert events == []
 
     def test_cancel_retries_on_deadlock(self, student, session, monkeypatch):
         booking = BookingService(actor=student).create_booking(student, session.pk)

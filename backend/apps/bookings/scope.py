@@ -10,7 +10,7 @@ from django.db.models import Q
 
 from apps.academics.scope import resolve_staff_laboratory, resolve_staff_training_center
 from apps.bookings.models import Booking, SupportTicket
-from apps.scheduling.models import LabSession
+from apps.scheduling.models import LabSession, Room
 from apps.users.models import UserRole
 
 _BOOKING_RELATED = ("student", "lab_work", "discipline", "room", "lab_session", "registered_by")
@@ -25,10 +25,41 @@ _SESSION_RELATED = (
 )
 
 
+def staff_rooms_qs(user):
+    """Аудитории, в которые сотрудник может писать.
+
+    Завлаб — все комнаты своей лаборатории, сотрудник — только закреплённые
+    за ним (``Room.default_lab_staff``), сисадмин — все. Преподаватель не пишет.
+    """
+    if not getattr(user, "is_authenticated", False):
+        return Room.objects.none()
+    if user.role == UserRole.SYS_ADMIN:
+        return Room.objects.all()
+    if user.role == UserRole.LAB_HEAD:
+        laboratory = resolve_staff_laboratory(user)
+        if laboratory is None:
+            return Room.objects.none()
+        return Room.objects.filter(laboratory=laboratory)
+    if user.role == UserRole.LAB_ADMIN:
+        return Room.objects.filter(default_lab_staff=user)
+    return Room.objects.none()
+
+
+def staff_can_modify_room(user, room) -> bool:
+    """Может ли сотрудник менять записи в этой аудитории."""
+    from apps.users.roles import staff_can_modify_bookings
+
+    if not staff_can_modify_bookings(user):
+        return False
+    return staff_rooms_qs(user).filter(pk=room.pk).exists()
+
+
 def staff_bookings_qs(user):
     """Брони в зоне доступа сотрудника."""
     if user.role == UserRole.SYS_ADMIN:
         return Booking.objects.select_related(*_BOOKING_RELATED)
+    if user.role == UserRole.TEACHER:
+        return Booking.objects.filter(lab_session__teacher=user).select_related(*_BOOKING_RELATED)
     lab = resolve_staff_laboratory(user)
     if not lab:
         return Booking.objects.none()
@@ -61,9 +92,15 @@ def staff_support_tickets_qs(user):
 
 
 def staff_sessions_qs(user, date_from=None, date_to=None):
-    """Слоты в зоне доступа сотрудника с опционным фильтром по датам."""
+    """Слоты в зоне доступа сотрудника с опционным фильтром по датам.
+
+    Преподаватель видит слоты, где назначен ответственным, даже без привязки
+    к лаборатории.
+    """
     if user.role == UserRole.SYS_ADMIN:
         qs = LabSession.objects.all()
+    elif user.role == UserRole.TEACHER:
+        qs = LabSession.objects.filter(teacher=user)
     else:
         lab = resolve_staff_laboratory(user)
         if not lab:

@@ -10,11 +10,21 @@ from unittest.mock import patch
 import pytest
 from django.core.cache import cache
 from django.urls import reverse
+from django.utils import timezone
 
-from apps.academics.models import Department, Discipline, Faculty
-from apps.scheduling.models import LabDisciplineBinding, Laboratory, TrainingCenter
+from apps.academics.models import Department, Discipline, Faculty, LabWork
+from apps.scheduling.models import (
+    LabDisciplineBinding,
+    Laboratory,
+    LabSession,
+    LabSessionStatus,
+    Room,
+    TrainingCenter,
+)
 from apps.scheduling.views import SESSION_ADMIN_LAB
 from apps.users.models import User, UserProfile, UserRole
+
+from .conftest import next_open_weekday_pair
 
 BINDINGS_URL = "/lab-head/bindings/"
 BIND_URL = "/lab-head/bindings/disciplines/{pk}/bind/"
@@ -323,3 +333,37 @@ class TestBindingsUI:
         assert BIND_URL.format(pk=phys_discipline.pk) not in page  # нет формы «Привязать»
         assert UNBIND_URL.format(pk=phys_discipline.pk) in page
 
+
+
+@pytest.mark.django_db
+class TestLabWorkArchive:
+    def test_delete_with_sessions_archives_instead_of_removing(
+        self, lab_head_client, lab, phys_discipline, semester
+    ):
+        lab_work = LabWork.objects.create(
+            number=1, title="ЛР архива", duration_minutes=90, is_published=True
+        )
+        lab_work.disciplines.add(phys_discipline)
+        lab_work.laboratories.add(lab)
+        room = Room.objects.create(
+            training_center=lab.training_center, number="101", laboratory=lab
+        )
+        starts = next_open_weekday_pair(days_ahead=3)
+        LabSession.objects.create(
+            lab_work=lab_work,
+            room=room,
+            semester=semester,
+            starts_at=starts,
+            ends_at=starts + timezone.timedelta(minutes=90),
+            status=LabSessionStatus.OPEN,
+        )
+
+        response = lab_head_client.post(
+            reverse("lab-head-lab-work-delete", args=[lab_work.pk]), follow=True
+        )
+        lab_work.refresh_from_db()
+
+        assert lab_work.is_archived is True
+        assert lab_work.is_published is False
+        assert "перенесена в архив" in response.content.decode()
+        assert "ЛР архива" not in _page(lab_head_client, reverse("lab-head-lab-works"))

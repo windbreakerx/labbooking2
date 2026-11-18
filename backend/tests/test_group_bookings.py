@@ -11,6 +11,7 @@ from tests.conftest import make_student, next_open_weekday_pair
 
 
 def _group_session(lab_work, room, semester, staff, group):
+    lab_work.laboratories.add(room.laboratory)
     starts = next_open_weekday_pair(days_ahead=3)
     return create_session(
         room.laboratory,
@@ -59,6 +60,7 @@ class TestGroupBookings:
     ):
         from apps.academics.models import StudentGroup
 
+        make_student("member@stud.spmi.ru", student_group)
         other_group = StudentGroup.objects.create(name="OTHER-24")
         other_group.disciplines.add(discipline)
         other_student = make_student("other@stud.spmi.ru", other_group)

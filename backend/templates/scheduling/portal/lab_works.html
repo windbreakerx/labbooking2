@@ -33,6 +33,14 @@
     </select>
     <label for="wf-capacity">Макс. мест</label>
     <input type="number" name="capacity" id="wf-capacity" min="1" value="{{ edit_work.capacity|default:30 }}">
+    <label for="wf-stands">Стенды</label>
+    <select name="stands" id="wf-stands" multiple size="4">
+      {% for stand in form_stands %}
+        <option value="{{ stand.pk }}"{% if stand.pk in edit_stand_ids %} selected{% endif %}>ауд. {{ stand.room.number }} — {{ stand.name }} ({{ stand.capacity }})</option>
+      {% empty %}
+        <option disabled>Стендов нет — добавьте их в админке</option>
+      {% endfor %}
+    </select>
     <label class="form-grid__check">
       <input type="checkbox" name="is_published"{% if not edit_work or edit_work.is_published %} checked{% endif %}>
       опубликована для студентов
@@ -41,14 +49,14 @@
       <button class="button" type="submit">{% if edit_work %}Сохранить{% else %}Создать{% endif %}</button>
     </div>
   </form>
-  <p class="field-hint">Изменение мест и длительности синхронизируется с будущими открытыми слотами.</p>
+  <p class="field-hint">Изменение мест и длительности синхронизируется с будущими открытыми слотами. Стенды — одинаковые установки: по одной в каждой аудитории, где читается работа. Если стендов нет, параллельность ограничивает только аудитория.</p>
 </div>
 
 {% if lab_works %}
   <div class="table-wrap">
     <table class="table">
       <thead>
-        <tr><th>№</th><th>Название</th><th>Дисциплины</th><th>Длительность</th><th>Мест</th><th>Статус</th><th>Действия</th></tr>
+        <tr><th>№</th><th>Название</th><th>Дисциплины</th><th>Длительность</th><th>Мест</th><th>Стенды</th><th>Статус</th><th>Действия</th></tr>
       </thead>
       <tbody>
         {% for work in lab_works %}
@@ -58,6 +66,7 @@
             <td>{{ work.disciplines.all|join:", "|default:"—" }}</td>
             <td>{{ work.duration_minutes }} мин</td>
             <td>{{ work.capacity }}</td>
+            <td>{% for stand in work.stands.all %}{{ stand.room.number }} — {{ stand.name }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</td>
             <td>
               {% if work.is_published %}<span class="badge badge--open">опубликована</span>
               {% else %}<span class="badge badge--muted">скрыта</span>{% endif %}
@@ -65,7 +74,7 @@
             <td class="cluster">
               <a class="button button--secondary button--sm" href="?edit={{ work.pk }}">Изменить</a>
               <form method="post" action="{% url 'lab-head-lab-work-delete' work.pk %}"
-                    onsubmit="return confirm('Удалить работу «{{ work.title|escapejs }}»?');">
+                    onsubmit="return confirm('Удалить работу «{{ work.title|escapejs }}»? Если по ней есть слоты, она уйдёт в архив.');">
                 {% csrf_token %}
                 <button class="button button--danger button--sm" type="submit">Удалить</button>
               </form>

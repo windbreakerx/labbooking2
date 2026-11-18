@@ -24,6 +24,14 @@
       {% endfor %}
     </select>
   </div>
+  <div class="filter-bar__field">
+    <label for="f-semester">Семестр</label>
+    <select name="semester" id="f-semester">
+      {% for item in semesters %}
+        <option value="{{ item.pk }}"{% if item.pk == selected_semester_id %} selected{% endif %}>{{ item.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
   <div class="filter-bar__actions">
     <button class="button" type="submit">Применить</button>
   </div>
@@ -46,17 +54,22 @@
     <p>Агрегированная статистика по дисциплинам.</p>
     <span class="button button--secondary">Скачать XLSX</span>
   </a>
-  <a class="card" href="{% url 'staff-report-room-load' %}">
-    <div class="card__header"><h2 class="card__title">Загруженность аудиторий</h2></div>
-    <p>Сводка по УЦ, лабораториям и аудиториям: слоты, часы, загрузка.</p>
+  <a class="card" href="{% url 'staff-report-room-load' %}{% if query_string %}?{{ query_string }}{% endif %}">
+    <div class="card__header"><h2 class="card__title">Заполняемость мест</h2></div>
+    <p>Сводка по УЦ, лабораториям и аудиториям: слоты, часы, заполняемость мест.</p>
     <span class="button button--secondary">Открыть отчёт</span>
   </a>
-  <a class="card" href="{% url 'staff-report-teacher-load' %}">
+  <a class="card" href="{% url 'staff-report-overflow' %}{% if query_string %}?{{ query_string }}{% endif %}">
+    <div class="card__header"><h2 class="card__title">Переполненные слоты</h2></div>
+    <p>Слоты, где записано больше людей, чем вмещает аудитория. С выгрузкой в XLSX.</p>
+    <span class="button button--secondary">Открыть отчёт</span>
+  </a>
+  <a class="card" href="{% url 'staff-report-teacher-load' %}{% if query_string %}?{{ query_string }}{% endif %}">
     <div class="card__header"><h2 class="card__title">Загруженность преподавателей</h2></div>
     <p>Количество слотов, часов и записей по каждому преподавателю.</p>
     <span class="button button--secondary">Открыть отчёт</span>
   </a>
-  <a class="card" href="{% url 'staff-report-curriculum' %}">
+  <a class="card" href="{% url 'staff-report-curriculum' %}{% if query_string %}?{{ query_string }}{% endif %}">
     <div class="card__header"><h2 class="card__title">Выполнение учебного плана</h2></div>
     <p>Прогресс групп по лабораторным работам с учётом required_sessions.</p>
     <span class="button button--secondary">Открыть отчёт</span>

@@ -4,15 +4,24 @@ from datetime import timedelta
 
 import pytest
 
-from apps.scheduling.models import Holiday, LabSession, LabSessionStatus
+from apps.scheduling.models import Holiday, LabSession, LabSessionStatus, LabStand
 from apps.scheduling.services.session_admin import create_session
 from apps.scheduling.services.session_bulk import (
+    BulkError,
     cancel_day,
     cancel_series,
     copy_day,
+    copy_week,
     create_series,
 )
-from tests.conftest import next_open_weekday_pair
+from apps.users.models import User, UserRole
+
+from .conftest import (
+    create_lab_work,
+    make_student,
+    next_open_weekday_pair,
+    seed_manual_booking,
+)
 
 
 def _series_payload(lab_work, room, semester, start):
@@ -130,8 +139,191 @@ class TestSessionBulk:
             },
             actor=staff,
         )
-        # Запрос отмены из исходной лаборатории не должен затронуть чужую аудиторию
-        result = cancel_series(
-            room.laboratory, semester, room=room, from_date=day, to_date=day, actor=staff, force=True
+        # Запрос отмены из исходной лаборатории по чужой аудитории — ошибка, не ноль
+        with pytest.raises(BulkError, match="другой лаборатории"):
+            cancel_series(
+                room.laboratory,
+                semester,
+                room=other_room,
+                from_date=day,
+                to_date=day,
+                actor=staff,
+                force=True,
+            )
+
+    def test_series_rolls_back_on_teacher_conflict(self, lab_work, room, semester, staff):
+        teacher = User.objects.create_user(
+            email="series-teacher@spmi.ru",
+            password="pass",
+            first_name="Т",
+            last_name="Преподаватель",
+            role=UserRole.TEACHER,
         )
-        assert result["sessions"] == 0
+        start = next_open_weekday_pair(days_ahead=3)
+        third = start + timedelta(weeks=2)
+        other_lab = create_lab_work(
+            lab_work.disciplines.first(),
+            number=2,
+            title="Другая ЛР",
+            duration_minutes=90,
+            is_published=True,
+        )
+        other_lab.laboratories.add(room.laboratory)
+        LabSession.objects.create(
+            lab_work=other_lab,
+            room=room,
+            semester=semester,
+            teacher=teacher,
+            starts_at=third,
+            ends_at=third + timedelta(minutes=90),
+            status=LabSessionStatus.OPEN,
+        )
+
+        payload = _series_payload(lab_work, room, semester, start)
+        payload["teacher_id"] = teacher.pk
+        with pytest.raises(BulkError) as exc:
+            create_series(room.laboratory, payload, actor=staff)
+
+        assert third.strftime("%d.%m.%Y") in str(exc.value)
+        assert not LabSession.objects.filter(lab_work=lab_work).exists()
+
+    def test_cancel_series_preview_counts_bookings(
+        self, lab_work, room, semester, staff, student, student_group
+    ):
+        day = next_open_weekday_pair(days_ahead=3).date()
+        session = create_session(
+            room.laboratory,
+            {
+                "lab_work_id": lab_work.pk,
+                "room_id": room.pk,
+                "semester_id": semester.pk,
+                "date": day.isoformat(),
+                "time": "10:35",
+            },
+            actor=staff,
+        )
+        other = make_student("bulk-preview-2@stud.spmi.ru", student_group)
+        seed_manual_booking(actor=staff, student=student, session=session)
+        seed_manual_booking(actor=staff, student=other, session=session)
+
+        preview = cancel_series(
+            room.laboratory,
+            semester,
+            room=room,
+            from_date=day,
+            to_date=day,
+            actor=staff,
+            force=False,
+        )
+        assert preview["sessions"] == 1
+        assert preview["booked_bookings"] == 2
+
+    def test_copy_week_requires_monday(self, lab_work, room, semester, staff):
+        source = next_open_weekday_pair(days_ahead=3).date()
+        while source.weekday() == 0:
+            source += timedelta(days=1)
+        target = source + timedelta(weeks=1)
+
+        with pytest.raises(BulkError, match="понедельник"):
+            copy_week(
+                room.laboratory,
+                semester,
+                room,
+                source,
+                target,
+                actor=staff,
+            )
+
+    def test_different_labs_share_room_at_same_time(
+        self, lab_work, discipline, room, semester, staff
+    ):
+        other_lab = create_lab_work(
+            discipline,
+            number=2,
+            title="Вторая ЛР",
+            duration_minutes=90,
+            is_published=True,
+        )
+        other_lab.laboratories.add(room.laboratory)
+        starts = next_open_weekday_pair(days_ahead=3)
+
+        create_session(
+            room.laboratory,
+            {
+                "lab_work_id": lab_work.pk,
+                "room_id": room.pk,
+                "semester_id": semester.pk,
+                "date": starts.date().isoformat(),
+                "time": starts.strftime("%H:%M"),
+            },
+            actor=staff,
+        )
+        second = create_session(
+            room.laboratory,
+            {
+                "lab_work_id": other_lab.pk,
+                "room_id": room.pk,
+                "semester_id": semester.pk,
+                "date": starts.date().isoformat(),
+                "time": starts.strftime("%H:%M"),
+            },
+            actor=staff,
+        )
+        assert second.pk is not None
+
+    def test_copy_day_rolls_back_on_stand_conflict(
+        self, lab_work, discipline, room, semester, staff
+    ):
+        stand = LabStand.objects.create(
+            name="Общий стенд копирования",
+            inventory_number="COPY-ST-1",
+            training_center=room.training_center,
+            room=room,
+        )
+        lab_work.stands.add(stand)
+        other_lab = create_lab_work(
+            discipline,
+            number=2,
+            title="Вторая ЛР",
+            duration_minutes=90,
+            is_published=True,
+        )
+        other_lab.laboratories.add(room.laboratory)
+        other_lab.stands.add(stand)
+
+        source_date = next_open_weekday_pair(days_ahead=3)
+        target_date = source_date + timedelta(days=1)
+        create_session(
+            room.laboratory,
+            {
+                "lab_work_id": lab_work.pk,
+                "room_id": room.pk,
+                "semester_id": semester.pk,
+                "date": source_date.date().isoformat(),
+                "time": source_date.strftime("%H:%M"),
+            },
+            actor=staff,
+        )
+        LabSession.objects.create(
+            lab_work=other_lab,
+            room=room,
+            semester=semester,
+            starts_at=target_date,
+            ends_at=target_date + timedelta(minutes=90),
+            status=LabSessionStatus.OPEN,
+        )
+
+        with pytest.raises(BulkError) as exc:
+            copy_day(
+                room.laboratory,
+                semester,
+                room,
+                source_date.date(),
+                target_date.date(),
+                actor=staff,
+            )
+
+        assert target_date.strftime("%d.%m.%Y") in str(exc.value)
+        assert not LabSession.objects.filter(
+            lab_work=lab_work, starts_at__date=target_date.date()
+        ).exists()

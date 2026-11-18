@@ -8,20 +8,23 @@ BookingService. TEACHER — только чтение (staff_can_modify_bookings
 from urllib.parse import urlencode
 
 from django.contrib import messages
+from django.core.paginator import Paginator
 from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View
 
+from apps.academics.models import Semester
 from apps.academics.scope import (
     staff_disciplines_qs,
-    staff_lab_works_qs,
     staff_manual_lab_work_items,
     staff_students_qs,
+    staff_writable_lab_works_qs,
 )
 from apps.bookings.models import Booking, BookingStatus
+from apps.bookings.params import parse_id
 from apps.bookings.reports import XLSX_CONTENT_TYPE, generate_report
-from apps.bookings.scope import staff_bookings_qs
+from apps.bookings.scope import staff_bookings_qs, staff_can_modify_room, staff_rooms_qs
 from apps.bookings.services import BookingError, BookingService
 from apps.bookings.services.booking_mutations import STATUS_TRANSITIONS
 from apps.bookings.services.session_catalog import staff_manual_slots
@@ -96,7 +99,26 @@ class StaffBookingsView(StaffRequiredMixin, View):
         bookings = list(
             order_bookings_queryset(filter_staff_bookings(qs, request.GET), request.GET)
         )
-        rows = [{"booking": booking, "transitions": _allowed_statuses(booking)} for booking in bookings]
+        paginator = Paginator(bookings, 50)
+        page_obj = paginator.get_page(request.GET.get("page"))
+        can_modify = staff_can_modify_bookings(request.user)
+        writable_room_ids = (
+            set(staff_rooms_qs(request.user).values_list("pk", flat=True))
+            if can_modify
+            else set()
+        )
+        can_write = bool(writable_room_ids)
+        rows = [
+            {
+                "booking": booking,
+                "transitions": _allowed_statuses(booking),
+                "can_modify": booking.room_id in writable_room_ids,
+            }
+            for booking in page_obj.object_list
+        ]
+        pagination_params = request.GET.copy()
+        pagination_params.pop("page", None)
+        pagination_query = f"{pagination_params.urlencode()}&" if pagination_params else ""
         return render(
             request,
             "bookings/staff/bookings.html",
@@ -106,7 +128,10 @@ class StaffBookingsView(StaffRequiredMixin, View):
                 "filters": request.GET,
                 "disciplines": staff_disciplines_qs(request.user),
                 "status_choices": Booking._meta.get_field("current_status").choices,
-                "can_modify": staff_can_modify_bookings(request.user),
+                "can_modify": can_write,
+                "show_no_rooms_hint": can_modify and not can_write,
+                "page_obj": page_obj,
+                "pagination_query": pagination_query,
             },
         )
 
@@ -119,6 +144,12 @@ class StaffBookingStatusView(StaffRequiredMixin, View):
         booking = staff_bookings_qs(request.user).filter(pk=pk).first()
         if booking is None:
             messages.error(request, "Запись недоступна в вашей зоне доступа.")
+            return redirect("staff-bookings")
+        if not staff_can_modify_room(request.user, booking.room):
+            messages.error(
+                request,
+                "Нет прав на изменение записей в этой аудитории. Обратитесь к завлабу.",
+            )
             return redirect("staff-bookings")
         new_status = request.POST.get("status", "")
         service = BookingService(actor=request.user, ip_address=_client_ip(request))
@@ -154,8 +185,14 @@ class StaffManualBookingView(StaffRequiredMixin, View):
         if session is None:
             messages.error(request, "Выберите слот для записи.")
             return redirect("staff-manual-booking")
-        if not staff_lab_works_qs(request.user).filter(pk=session.lab_work_id).exists():
+        if not staff_writable_lab_works_qs(request.user).filter(pk=session.lab_work_id).exists():
             messages.error(request, "Лабораторная работа недоступна для вашей лаборатории.")
+            return redirect("staff-manual-booking")
+        if not staff_can_modify_room(request.user, session.room):
+            messages.error(
+                request,
+                "Нет прав на запись в эту аудиторию. Обратитесь к завлабу.",
+            )
             return redirect("staff-manual-booking")
         service = BookingService(actor=request.user, ip_address=_client_ip(request))
         try:
@@ -213,13 +250,14 @@ class StaffManualSlotsView(StaffRequiredMixin, View):
         if denied:
             return denied
         lab_work_id = request.GET.get("lab_work_id", "")
-        lab_work = staff_lab_works_qs(request.user).filter(
+        lab_work = staff_writable_lab_works_qs(request.user).filter(
             pk=lab_work_id if lab_work_id.isdigit() else 0
         ).first()
         if lab_work is None:
             return HttpResponseForbidden()
         by_date: dict = {}
-        for slot in staff_manual_slots(lab_work.pk):
+        room_ids = staff_rooms_qs(request.user).values_list("pk", flat=True)
+        for slot in staff_manual_slots(lab_work.pk, room_ids=room_ids):
             by_date.setdefault(timezone.localtime(slot.session.starts_at).date(), []).append(slot)
         return render(
             request,
@@ -232,11 +270,16 @@ class StaffReportsView(StaffRequiredMixin, View):
     """Лендинг отчётов: период/дисциплина применяются к ссылкам выгрузок."""
 
     def get(self, request):
+        semester_id = parse_id(request.GET.get("semester"))
+        active_semester = Semester.objects.filter(is_active=True).first()
+        selected_semester_id = semester_id or (active_semester.pk if active_semester else None)
         query = {
             key: request.GET[key]
             for key in ("date_from", "date_to", "discipline")
             if request.GET.get(key)
         }
+        if selected_semester_id:
+            query["semester"] = selected_semester_id
         return render(
             request,
             "bookings/staff/reports.html",
@@ -244,6 +287,8 @@ class StaffReportsView(StaffRequiredMixin, View):
                 "filters": request.GET,
                 "query_string": urlencode(query),
                 "disciplines": staff_disciplines_qs(request.user),
+                "semesters": Semester.objects.order_by("-start_date"),
+                "selected_semester_id": selected_semester_id,
             },
         )
 
@@ -256,6 +301,7 @@ class StaffReportDownloadView(StaffRequiredMixin, View):
             date_to=request.GET.get("date_to", ""),
             discipline_id=request.GET.get("discipline", ""),
             staff_user=request.user,
+            semester_id=parse_id(request.GET.get("semester")),
         )
         response = HttpResponse(payload, content_type=XLSX_CONTENT_TYPE)
         response["Content-Disposition"] = f'attachment; filename="{report_type}.xlsx"'

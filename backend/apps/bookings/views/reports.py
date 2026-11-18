@@ -12,12 +12,15 @@ from django.shortcuts import redirect, render
 from django.views import View
 
 from apps.academics.models import Semester
+from apps.bookings.params import parse_date, parse_id
 from apps.bookings.reports import (
     XLSX_CONTENT_TYPE,
     curriculum_rows,
     export_curriculum_xlsx,
+    export_overflow_xlsx,
     export_room_load_xlsx,
     export_teacher_load_xlsx,
+    overflow_rows,
     room_load_rows,
     teacher_load_rows,
 )
@@ -26,7 +29,11 @@ from apps.users.models import UserRole
 
 
 def _parse_dates(request):
-    return request.GET.get("date_from", ""), request.GET.get("date_to", "")
+    return parse_date(request.GET.get("date_from")), parse_date(request.GET.get("date_to"))
+
+
+def _semester_id(request):
+    return parse_id(request.GET.get("semester"))
 
 
 def _deny_if_teacher(request):
@@ -43,7 +50,12 @@ class RoomLoadReportView(StaffRequiredMixin, View):
         if denied:
             return denied
         date_from, date_to = _parse_dates(request)
-        rows = room_load_rows(request.user, date_from=date_from or None, date_to=date_to or None)
+        rows = room_load_rows(
+            request.user,
+            date_from=date_from,
+            date_to=date_to,
+            semester_id=_semester_id(request),
+        )
         if request.GET.get("format") == "xlsx":
             payload = export_room_load_xlsx(rows)
             response = HttpResponse(payload, content_type=XLSX_CONTENT_TYPE)
@@ -52,6 +64,31 @@ class RoomLoadReportView(StaffRequiredMixin, View):
         return render(
             request,
             "bookings/staff/report_room_load.html",
+            {"rows": rows, "filters": request.GET},
+        )
+
+
+class OverflowReportView(StaffRequiredMixin, View):
+    """Слоты, где записано больше людей, чем вмещает аудитория."""
+
+    def get(self, request):
+        denied = _deny_if_teacher(request)
+        if denied:
+            return denied
+        date_from, date_to = _parse_dates(request)
+        rows = overflow_rows(
+            request.user,
+            date_from=date_from,
+            date_to=date_to,
+            semester_id=_semester_id(request),
+        )
+        if request.GET.get("format") == "xlsx":
+            response = HttpResponse(export_overflow_xlsx(rows), content_type=XLSX_CONTENT_TYPE)
+            response["Content-Disposition"] = 'attachment; filename="overflow.xlsx"'
+            return response
+        return render(
+            request,
+            "bookings/staff/report_overflow.html",
             {"rows": rows, "filters": request.GET},
         )
 
@@ -65,9 +102,10 @@ class TeacherLoadReportView(StaffRequiredMixin, View):
             teacher_id = request.user.pk
         rows = teacher_load_rows(
             request.user,
-            date_from=date_from or None,
-            date_to=date_to or None,
-            teacher_id=int(teacher_id) if teacher_id and teacher_id.isdigit() else None,
+            date_from=date_from,
+            date_to=date_to,
+            teacher_id=parse_id(teacher_id),
+            semester_id=_semester_id(request),
         )
         if request.GET.get("format") == "xlsx":
             payload = export_teacher_load_xlsx(rows)
@@ -98,10 +136,10 @@ class CurriculumReportView(StaffRequiredMixin, View):
         denied = _deny_if_teacher(request)
         if denied:
             return denied
-        semester_id = request.GET.get("semester")
+        semester_id = _semester_id(request)
         rows = curriculum_rows(
             request.user,
-            semester_id=int(semester_id) if semester_id and semester_id.isdigit() else None,
+            semester_id=semester_id,
         )
         if request.GET.get("format") == "xlsx":
             payload = export_curriculum_xlsx(rows)

@@ -7,11 +7,13 @@
 from io import BytesIO
 
 from django.db.models import Count, Q
+from django.utils import timezone
 from openpyxl import Workbook
 
 from apps.academics.models import GroupDisciplineLoad, LabWork, StudentGroup
 from apps.academics.scope import lab_head_disciplines_qs
 from apps.bookings.models import Booking, BookingStatus
+from apps.bookings.params import parse_date, parse_id
 from apps.bookings.scope import staff_bookings_qs, staff_sessions_qs
 from apps.scheduling.models import LabSession, LabSessionStatus
 from apps.users.models import UserRole
@@ -40,17 +42,22 @@ def generate_report(
     date_to: str | None = None,
     discipline_id: str | None = None,
     staff_user=None,
+    semester_id=None,
 ) -> bytes:
     """Выгрузить отчёт в XLSX: bookings / attendance / discipline_summary."""
     qs = Booking.objects.all()
     if staff_user is not None:
         qs = staff_bookings_qs(staff_user)
     qs = qs.select_related(*_REPORT_RELATED)
-    if date_from:
+    if semester_id:
+        qs = qs.filter(lab_session__semester_id=semester_id)
+    elif staff_user is not None:
+        qs = qs.filter(lab_session__semester__is_active=True)
+    if date_from := parse_date(date_from):
         qs = qs.filter(scheduled_at__date__gte=date_from)
-    if date_to:
+    if date_to := parse_date(date_to):
         qs = qs.filter(scheduled_at__date__lte=date_to)
-    if discipline_id:
+    if discipline_id := parse_id(discipline_id):
         qs = qs.filter(discipline_id=discipline_id)
 
     wb = Workbook()
@@ -132,12 +139,17 @@ def _summary_rows(qs) -> list[list]:
     ]
 
 
-# --- Загруженность аудиторий --------------------------------------------------
+# --- Заполняемость мест -------------------------------------------------------
 
 
-def room_load_rows(user, date_from=None, date_to=None):
-    """Агрегаты по аудиториям: слоты, часы, записи, загрузка."""
+def room_load_rows(user, date_from=None, date_to=None, semester_id=None):
+    """Заполняемость мест по аудиториям: слоты, часы, записи, booked / capacity."""
     sessions = staff_sessions_qs(user, date_from=date_from, date_to=date_to)
+    sessions = (
+        sessions.filter(semester_id=semester_id)
+        if semester_id
+        else sessions.filter(semester__is_active=True)
+    )
     session_ids = list(sessions.values_list("pk", flat=True))
     bookings_counts = {
         row["lab_session_id"]: row["count"]
@@ -185,8 +197,8 @@ def room_load_rows(user, date_from=None, date_to=None):
 def export_room_load_xlsx(rows: list[dict]) -> bytes:
     wb = Workbook()
     ws = wb.active
-    ws.title = "Загруженность аудиторий"
-    ws.append(["УЦ", "Лаборатория", "Аудитория", "Слотов", "Часов", "Записей", "Вместимость", "Загрузка %"])
+    ws.title = "Заполняемость мест"
+    ws.append(["УЦ", "Лаборатория", "Аудитория", "Слотов", "Часов", "Записей", "Вместимость", "Заполняемость %"])
     for row in rows:
         ws.append([
             row["tc_number"],
@@ -203,12 +215,97 @@ def export_room_load_xlsx(rows: list[dict]) -> bytes:
     return buf.getvalue()
 
 
+# --- Переполненные слоты -------------------------------------------------------
+
+
+def overflow_rows(user, date_from=None, date_to=None, semester_id=None):
+    """Слоты, где людей в аудитории больше её вместимости.
+
+    Считается сумма активных записей на все пересекающиеся слоты комнаты:
+    аудитория общая, поэтому переполнение — это свойство окна, а не одной пары.
+    """
+    sessions_qs = staff_sessions_qs(user, date_from=date_from, date_to=date_to).exclude(
+        status=LabSessionStatus.CANCELLED
+    )
+    sessions_qs = (
+        sessions_qs.filter(semester_id=semester_id)
+        if semester_id
+        else sessions_qs.filter(semester__is_active=True)
+    )
+    sessions = list(sessions_qs.order_by("starts_at"))
+    if not sessions:
+        return []
+    room_ids = {session.room_id for session in sessions}
+    bookings_by_room: dict[int, list[tuple]] = {}
+    for room_id, starts_at, ends_at in Booking.objects.filter(
+        current_status=BookingStatus.BOOKED,
+        lab_session__room_id__in=room_ids,
+    ).values_list("lab_session__room_id", "lab_session__starts_at", "lab_session__ends_at"):
+        bookings_by_room.setdefault(room_id, []).append((starts_at, ends_at))
+
+    rows = []
+    for session in sessions:
+        booked = sum(
+            1
+            for starts_at, ends_at in bookings_by_room.get(session.room_id, [])
+            if starts_at < session.ends_at and ends_at > session.starts_at
+        )
+        if booked > session.room.capacity:
+            rows.append(
+                {
+                    "session": session,
+                    "room": session.room,
+                    "lab_work": session.lab_work,
+                    "booked": booked,
+                    "capacity": session.room.capacity,
+                    "lab_capacity": session.capacity,
+                }
+            )
+    return rows
+
+
+def export_overflow_xlsx(rows: list[dict]) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Переполненные слоты"
+    ws.append([
+        "Дата",
+        "Время",
+        "Аудитория",
+        "Лаборатория",
+        "ЛР",
+        "Записано",
+        "Лимит аудитории",
+        "Мест в ЛР",
+    ])
+    for row in rows:
+        local = timezone.localtime(row["session"].starts_at)
+        ws.append([
+            local.strftime("%d.%m.%Y"),
+            local.strftime("%H:%M"),
+            row["room"].number,
+            row["room"].laboratory.name if row["room"].laboratory else "—",
+            row["lab_work"].title,
+            row["booked"],
+            row["capacity"],
+            row["lab_capacity"],
+        ])
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # --- Загруженность преподавателей ---------------------------------------------
 
 
-def teacher_load_rows(user, date_from=None, date_to=None, teacher_id=None):
+def teacher_load_rows(user, date_from=None, date_to=None, teacher_id=None, semester_id=None):
     """Агрегаты по преподавателям. TEACHER видит только себя."""
     sessions = staff_sessions_qs(user, date_from=date_from, date_to=date_to)
+    sessions = (
+        sessions.filter(semester_id=semester_id)
+        if semester_id
+        else sessions.filter(semester__is_active=True)
+    )
     if teacher_id:
         sessions = sessions.filter(teacher_id=teacher_id)
     elif user.role == UserRole.TEACHER:
@@ -299,7 +396,7 @@ def curriculum_rows(user, semester_id=None):
         .distinct()
     )
     visited_counts = {
-        (row["lab_work_id"], row["group_id"]): row["count"]
+        (row["lab_work_id"], row["student__profile__student_group_id"]): row["count"]
         for row in Booking.objects.filter(
             lab_work_id__in=lab_work_ids,
             current_status=BookingStatus.VISITED,
@@ -368,8 +465,8 @@ def dashboard_kpi(laboratory=None):
     from django.utils import timezone
 
     now = timezone.now()
-    session_qs = LabSession.objects.all()
-    booking_qs = Booking.objects.all()
+    session_qs = LabSession.objects.filter(semester__is_active=True)
+    booking_qs = Booking.objects.filter(lab_session__semester__is_active=True)
     if laboratory is not None:
         session_qs = session_qs.filter(
             Q(room__laboratory=laboratory) | Q(lab_work__laboratories=laboratory)
@@ -389,10 +486,8 @@ def dashboard_kpi(laboratory=None):
     visited = status_counts.get(BookingStatus.VISITED, 0)
     booked = status_counts.get(BookingStatus.BOOKED, 0)
     no_show = status_counts.get(BookingStatus.NO_SHOW, 0)
-    cancelled = (
-        status_counts.get(BookingStatus.CANCELLED, 0)
-        + status_counts.get(BookingStatus.SLOT_CANCELLED, 0)
-    )
+    cancelled = status_counts.get(BookingStatus.CANCELLED, 0)
+    slot_cancelled = status_counts.get(BookingStatus.SLOT_CANCELLED, 0)
     return {
         "total_sessions": total_sessions,
         "upcoming_sessions": upcoming_sessions,
@@ -400,6 +495,7 @@ def dashboard_kpi(laboratory=None):
         "booked": booked,
         "no_show": no_show,
         "cancelled": cancelled,
+        "slot_cancelled": slot_cancelled,
     }
 
 
@@ -420,8 +516,10 @@ def dashboard_no_show_top(laboratory=None, limit: int = 10):
 
 
 def dashboard_room_utilization(laboratory=None):
-    """Загрузка аудиторий (%) для dashboard."""
-    sessions = LabSession.objects.exclude(status=LabSessionStatus.CANCELLED)
+    """Заполняемость мест (%) для dashboard по активному семестру."""
+    sessions = LabSession.objects.filter(semester__is_active=True).exclude(
+        status=LabSessionStatus.CANCELLED
+    )
     if laboratory is not None:
         sessions = sessions.filter(room__laboratory=laboratory)
     session_ids = list(sessions.values_list("pk", flat=True))

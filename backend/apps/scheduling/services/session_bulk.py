@@ -8,9 +8,10 @@ from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta
 
 from django.db import models as django_models
+from django.db import transaction
 from django.utils import timezone
 
-from apps.bookings.models import BookingStatus, WaitlistEntry
+from apps.bookings.models import Booking, BookingStatus, WaitlistEntry
 from apps.scheduling.models import (
     Holiday,
     LabSession,
@@ -18,6 +19,7 @@ from apps.scheduling.models import (
     Room,
 )
 from apps.scheduling.services.session_admin import (
+    SessionError,
     cancel_session,
     clean_session_payload,
     create_session,
@@ -80,17 +82,25 @@ def _occurrence_dates(
     return dates
 
 
+def _create_on_date(laboratory, data: dict, target_date: date, *, actor=None):
+    """Создать слот и добавить дату к ошибкам валидации."""
+    try:
+        return create_session(laboratory, data, actor=actor)
+    except SessionError as exc:
+        raise BulkError(f"{target_date:%d.%m.%Y}: {exc}") from exc
+
+
+@transaction.atomic
 def create_series(laboratory, data: dict, *, actor=None) -> dict:
     """Создать серию слотов.
 
     Параметры ``data``:
     - lab_work_id, room_id, semester_id
-    - teacher_id (опц.), allowed_student_groups (опц.), used_stands (опц.)
+    - teacher_id (опц.), allowed_student_groups (опц.)
     - start_date, start_time
     - repeat: NONE | WEEKLY | BIWEEKLY
     - occurrences (≤ 30)
     - skip_holidays (bool, default True)
-    - capacity (опц.)
     """
     repeat = data.get("repeat", "NONE")
     try:
@@ -122,12 +132,9 @@ def create_series(laboratory, data: dict, *, actor=None) -> dict:
         "semester_id": semester.pk,
         "teacher_id": first_payload["teacher"].pk if first_payload["teacher"] else None,
         "booking_mode": first_payload["booking_mode"],
-        "capacity": first_payload["capacity"],
     }
     if first_payload["allowed_groups"]:
         base_data["allowed_student_groups"] = [g.pk for g in first_payload["allowed_groups"]]
-    if first_payload["used_stands"]:
-        base_data["used_stands"] = [s.pk for s in first_payload["used_stands"]]
 
     dates = _occurrence_dates(start_date, repeat, occurrences, semester)
     holiday_dates = set(Holiday.objects.values_list("date", flat=True)) if skip_holidays else set()
@@ -154,7 +161,7 @@ def create_series(laboratory, data: dict, *, actor=None) -> dict:
             **base_data,
             "starts_at": starts_at.isoformat(),
         }
-        create_session(laboratory, occurrence_data, actor=actor)
+        _create_on_date(laboratory, occurrence_data, occurrence_date, actor=actor)
         created += 1
 
     return {
@@ -174,15 +181,14 @@ def _copy_session(session: LabSession, target_date: date) -> dict:
         "date": target_date.isoformat(),
         "time": local_start.strftime("%H:%M"),
         "booking_mode": session.booking_mode,
-        "capacity": session.capacity,
         "allowed_student_groups": list(
             session.allowed_student_groups.values_list("pk", flat=True)
         ),
-        "used_stands": list(session.used_stands.values_list("pk", flat=True)),
         "occupant_group_id": session.occupant_group_id,
     }
 
 
+@transaction.atomic
 def _copy_sessions(
     laboratory,
     sessions: Iterable[LabSession],
@@ -213,7 +219,7 @@ def _copy_sessions(
         ).exclude(status=LabSessionStatus.CANCELLED).exists():
             skipped_duplicates += 1
             continue
-        create_session(laboratory, data, actor=actor)
+        _create_on_date(laboratory, data, target_date, actor=actor)
         created += 1
     return {
         "created": created,
@@ -255,9 +261,15 @@ def copy_week(
     *,
     actor=None,
 ) -> dict:
-    """Копировать неделю слотов комнаты на другую неделю в том же семестре."""
+    """Копировать неделю слотов комнаты на другую неделю в том же семестре.
+
+    Обе даты должны быть понедельниками: иначе непонятно, какую неделю
+    копировать пользователь, указавший середину недели.
+    """
     if room.laboratory_id and room.laboratory_id != laboratory.pk:
         raise BulkError("Аудитория принадлежит другой лаборатории.")
+    if source_week_start.weekday() != 0 or target_week_start.weekday() != 0:
+        raise BulkError("Даты недели должны быть понедельниками.")
     if target_week_start < semester.start_date or target_week_start > semester.end_date:
         raise BulkError("Целевая неделя вне границ семестра.")
     source_dates = {source_week_start + timedelta(days=i) for i in range(7)}
@@ -306,6 +318,7 @@ def _cancel_scope(
     return qs, from_date, to_date
 
 
+@transaction.atomic
 def cancel_series(
     laboratory,
     semester,
@@ -320,16 +333,18 @@ def cancel_series(
     """Двухфазная отмена серии слотов.
 
     ``force=False`` — preview; ``force=True`` — выполнить отмену.
+    Preview считает записи студентов, а не слоты: подпись «записей» должна
+    совпадать с тем, что увидит завлаб.
     """
+    if room is not None and room.laboratory_id and room.laboratory_id != laboratory.pk:
+        raise BulkError("Аудитория принадлежит другой лаборатории.")
     qs, _from_date, _to_date = _cancel_scope(
         laboratory, semester, lab_work=lab_work, room=room, from_date=from_date, to_date=to_date
     )
     sessions = list(qs)
-    booked = (
-        sum(1 for s in sessions if s.bookings.filter(current_status=BookingStatus.BOOKED).exists())
-        if sessions
-        else 0
-    )
+    booked = Booking.objects.filter(
+        lab_session__in=sessions, current_status=BookingStatus.BOOKED
+    ).count()
     waitlist_count = WaitlistEntry.objects.filter(lab_session__in=sessions).count()
     preview = {
         "sessions": len(sessions),

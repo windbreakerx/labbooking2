@@ -23,7 +23,6 @@ class TestBookingRelease:
             semester=semester,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         # release отсутствует
@@ -38,7 +37,6 @@ class TestBookingRelease:
             semester=semester,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         LabWorkBookingRelease.objects.create(
@@ -57,7 +55,6 @@ class TestBookingRelease:
             semester=semester,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session)

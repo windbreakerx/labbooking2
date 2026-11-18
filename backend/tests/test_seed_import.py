@@ -6,6 +6,7 @@
 """
 
 import csv
+from io import StringIO
 
 import pytest
 from django.core.management import call_command
@@ -268,7 +269,77 @@ class TestImportDekanatCsv:
             [{"email": "a@x.local", "password": "", "last_name": "А", "first_name": "А",
               "group": "ТНГ-24", "dekanat_id": "DK-1", "student_id": ""},
              {"email": "b@x.local", "password": "", "last_name": "Б", "first_name": "Б",
-              "group": "ЭХТ-24", "dekanat_id": "DK-2", "student_id": ""}],
+              "group": "ЭХТ-24", "dekanat_id": "DK-2", "student_id": ""},
+             {"email": "c@x.local", "password": "", "last_name": "В", "first_name": "В",
+              "group": "", "dekanat_id": "DK-3", "student_id": ""}],
         )
         _run_import(students, "students", only_groups="ТНГ-24")
         assert User.objects.filter(role=UserRole.STUDENT).count() == 1
+
+    def test_repeat_import_keeps_password_unless_reset(self, seeded, tmp_path):
+        fields = ["email", "password", "last_name", "first_name", "group", "dekanat_id", "student_id"]
+        rows = [{"email": "keep@x.local", "password": "first", "last_name": "И", "first_name": "И",
+                 "group": "", "dekanat_id": "DK-P1", "student_id": ""}]
+        _run_import(_write_csv(tmp_path, "p1.csv", fields, rows), "students")
+        user = User.objects.get(email="keep@x.local")
+        assert user.check_password("first")
+
+        rows[0]["password"] = "second"
+        _run_import(_write_csv(tmp_path, "p2.csv", fields, rows), "students")
+        user.refresh_from_db()
+        assert user.check_password("first")
+
+        _run_import(
+            _write_csv(tmp_path, "p3.csv", fields, rows), "students", reset_passwords=True
+        )
+        user.refresh_from_db()
+        assert user.check_password("second")
+
+    def test_staff_row_does_not_promote_student(self, seeded, tmp_path):
+        student_fields = ["email", "password", "last_name", "first_name", "group", "dekanat_id", "student_id"]
+        _run_import(
+            _write_csv(
+                tmp_path,
+                "student.csv",
+                student_fields,
+                [{"email": "same@x.local", "password": "p", "last_name": "С", "first_name": "С",
+                  "group": "", "dekanat_id": "DK-SAME", "student_id": ""}],
+            ),
+            "students",
+        )
+        assert User.objects.get(email="same@x.local").role == UserRole.STUDENT
+
+        staff_fields = [
+            "email", "password", "last_name", "first_name", "role",
+            "training_center_number", "is_staff", "discipline_codes",
+        ]
+        output = StringIO()
+        _run_import(
+            _write_csv(
+                tmp_path,
+                "staff.csv",
+                staff_fields,
+                [{"email": "same@x.local", "password": "", "last_name": "С", "first_name": "С",
+                  "role": "LAB_HEAD", "training_center_number": "1", "is_staff": "true",
+                  "discipline_codes": ""}],
+            ),
+            "staff",
+            stdout=output,
+        )
+
+        user = User.objects.get(email="same@x.local")
+        assert user.role == UserRole.STUDENT
+        assert user.is_staff is False
+        assert "роль" in output.getvalue()
+
+    def test_broken_row_is_reported_and_does_not_stop_file(self, seeded, tmp_path):
+        path = _write_csv(
+            tmp_path, "g.csv", ["name"], [{"name": ""}, {"name": "ТНГ-26"}]
+        )
+        output = StringIO()
+        _run_import(path, "groups", stdout=output)
+
+        assert StudentGroup.objects.filter(name="ТНГ-26").exists()
+        text = output.getvalue()
+        assert "Строка 2" in text
+        assert "name: не заполнено" in text

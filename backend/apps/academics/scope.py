@@ -29,7 +29,9 @@ def _safe_profile(user: User):
 
 
 def published_disciplines_qs() -> QuerySet[Discipline]:
-    return Discipline.objects.filter(is_published=True, semester__is_active=True)
+    return Discipline.objects.filter(
+        is_published=True, is_archived=False, semester__is_active=True
+    )
 
 
 def resolve_student_group(user: User) -> StudentGroup | None:
@@ -91,6 +93,7 @@ def student_lab_works_qs(user: User, discipline_id: int | None = None) -> QueryS
 
     qs = LabWork.objects.filter(
         is_published=True,
+        is_archived=False,
         disciplines__semester__is_active=True,
         disciplines__in=discipline_ids,
     ).distinct()
@@ -106,6 +109,7 @@ def student_lab_works_qs(user: User, discipline_id: int | None = None) -> QueryS
         open_qs = LabWork.objects.filter(
             pk__in=open_ids,
             is_published=True,
+            is_archived=False,
             disciplines__semester__is_active=True,
         ).distinct()
         if discipline_id is not None:
@@ -211,7 +215,7 @@ def lab_head_disciplines_qs(user: User) -> QuerySet[Discipline]:
 
 def staff_lab_works_qs(user: User, discipline_id: int | None = None) -> QuerySet[LabWork]:
     qs = LabWork.objects.filter(
-        is_published=True, disciplines__semester__is_active=True
+        is_published=True, is_archived=False, disciplines__semester__is_active=True
     ).distinct()
     if discipline_id is not None:
         qs = qs.filter(disciplines=discipline_id)
@@ -260,9 +264,23 @@ def staff_students_qs(user: User) -> QuerySet[User]:
     return qs.filter(filters).distinct().order_by("last_name", "first_name", "email")
 
 
+def staff_writable_lab_works_qs(user: User, discipline_id: int | None = None) -> QuerySet[LabWork]:
+    """ЛР, в слоты которых сотрудник может писать вручную.
+
+    LAB_ADMIN — только ЛР, у которых есть слот в закреплённой за ним комнате;
+    LAB_HEAD — вся лаборатория; TEACHER — ничего.
+    """
+    qs = staff_lab_works_qs(user, discipline_id=discipline_id)
+    if user.role == UserRole.LAB_ADMIN:
+        return qs.filter(sessions__room__default_lab_staff=user).distinct()
+    if user.role == UserRole.TEACHER:
+        return qs.none()
+    return qs
+
+
 def staff_manual_lab_work_items(user: User, student: User) -> QuerySet[LabWork]:
     """ЛР для ручной записи: учебный план группы студента ∩ зона сотрудника."""
     plan_ids = set(student_lab_works_qs(student).values_list("pk", flat=True))
     if not plan_ids:
         return LabWork.objects.none()
-    return staff_lab_works_qs(user).filter(pk__in=plan_ids)
+    return staff_writable_lab_works_qs(user).filter(pk__in=plan_ids)

@@ -20,12 +20,14 @@ from apps.bookings.models import (
     RegistrationType,
 )
 from apps.bookings.notifications import notify_booking_event
+from apps.bookings.scope import staff_can_modify_room
 from apps.bookings.services.booking_mutations import BookingMutationsMixin
 from apps.bookings.services.errors import BookingError
 from apps.bookings.services.retry import retry_on_deadlock
 from apps.bookings.services.seat_capacity import seat_remainings, session_seat_counts
 from apps.bookings.services.session_availability import (
     can_student_book_session,
+    is_booking_release_open,
     is_manual_session_time_allowed,
     is_pair_time_for_booking,
     manual_booking_max_date,
@@ -103,15 +105,15 @@ class BookingService(BookingMutationsMixin):
     def _validate_booking_window(
         self,
         session: LabSession,
-        skip_student_rules: bool = False,
         *,
         student: User | None = None,
     ):
         now = timezone.now()
         session_local_date = timezone.localtime(session.starts_at).date()
-        if not skip_student_rules:
-            if not can_student_book_session(student, session, now):
-                raise BookingError("Слот недоступен для записи.")
+        if not is_booking_release_open(session.lab_work_id, session.semester_id, now):
+            raise BookingError("запись на эту лабораторную работу в текущем семестре закрыта")
+        if not can_student_book_session(student, session, now):
+            raise BookingError("Слот недоступен для записи.")
         if session.starts_at <= now:
             raise BookingError("Нельзя записаться на прошедший слот.")
         self._assert_slot_bookable(session, session_local_date)
@@ -161,17 +163,17 @@ class BookingService(BookingMutationsMixin):
         )
 
     def _collect_booking_lock_ids(self, session: LabSession) -> list[int]:
-        """Целевой слот + пересекающиеся слоты аудитории/ЛР/стенда, отсортировано (анти-deadlock)."""
+        """Целевой слот + пересекающиеся слоты этой же аудитории (анти-deadlock: по возрастанию pk).
+
+        Места теперь считаются только внутри слота и комнаты, поэтому чужие
+        аудитории и параллельные слоты той же ЛР блокировать незачем.
+        """
         lock_ids = {session.pk}
         overlapping = LabSession.objects.filter(
             starts_at__lt=session.ends_at,
             ends_at__gt=session.starts_at,
         ).values_list("pk", flat=True)
         lock_ids.update(overlapping.filter(room_id=session.room_id))
-        lock_ids.update(overlapping.filter(lab_work_id=session.lab_work_id))
-        stand_id = session.lab_work.primary_stand_id
-        if stand_id:
-            lock_ids.update(overlapping.filter(lab_work__primary_stand_id=stand_id))
         return sorted(lock_ids)
 
     def _lock_for_booking(self, session: LabSession):
@@ -180,12 +182,6 @@ class BookingService(BookingMutationsMixin):
     # --- Создание записи -------------------------------------------------------
 
     def _check_lab_work_and_discipline_limits(self, student: User, discipline_id: int, lab_work):
-        if Booking.objects.filter(
-            student=student,
-            discipline_id=discipline_id,
-            current_status__in=ACTIVE_STATUSES,
-        ).exists():
-            raise BookingError("Уже есть активная запись по этой дисциплине.")
         visited_count = Booking.objects.filter(
             student=student,
             lab_work=lab_work,
@@ -208,7 +204,6 @@ class BookingService(BookingMutationsMixin):
         *,
         discipline_id: int | None = None,
         manual: bool = False,
-        skip_student_rules: bool = False,
     ) -> Booking:
         self.booking_warnings = []
         return self._create_booking_with_retry(
@@ -216,7 +211,6 @@ class BookingService(BookingMutationsMixin):
             session_id,
             discipline_id=discipline_id,
             manual=manual,
-            skip_student_rules=skip_student_rules,
         )
 
     @retry_on_deadlock
@@ -229,22 +223,14 @@ class BookingService(BookingMutationsMixin):
         student: User,
         lab_work_id: int,
         discipline_id: int | None,
-        *,
-        manual: bool = False,
-        skip_student_rules: bool = False,
     ) -> Discipline:
-        student_rules_apply = student.role == UserRole.STUDENT and (manual or not skip_student_rules)
+        student_rules_apply = student.role == UserRole.STUDENT
         if discipline_id is not None:
             discipline = Discipline.objects.filter(lab_works=lab_work_id, pk=discipline_id).first()
             if discipline is None:
                 raise BookingError("Дисциплина недоступна для этой лабораторной работы.")
             if student_rules_apply and not student_disciplines_qs(student).filter(pk=discipline_id).exists():
                 raise BookingError("Дисциплина недоступна для этой лабораторной работы.")
-            return discipline
-        if skip_student_rules and not manual:
-            discipline = Discipline.objects.filter(lab_works=lab_work_id).order_by("title").first()
-            if discipline is None:
-                raise BookingError("У лабораторной работы нет привязанных дисциплин.")
             return discipline
         discipline = student_disciplines_qs(student).filter(lab_works=lab_work_id).order_by("title").first()
         if discipline is None:
@@ -258,7 +244,6 @@ class BookingService(BookingMutationsMixin):
         *,
         discipline_id: int | None = None,
         manual: bool = False,
-        skip_student_rules: bool = False,
     ) -> Booking:
         if manual and self.actor and not staff_can_modify_bookings(self.actor):
             raise BookingError("Недостаточно прав для ручной записи.")
@@ -267,27 +252,32 @@ class BookingService(BookingMutationsMixin):
             .prefetch_related("lab_work__disciplines")
             .get(pk=session_id)
         )
-        student_rules_apply = student.role == UserRole.STUDENT and (manual or not skip_student_rules)
+        if (
+            manual
+            and self.actor
+            and staff_can_modify_bookings(self.actor)
+            and not staff_can_modify_room(self.actor, session.room)
+        ):
+            raise BookingError(
+                "Нет прав на запись в эту аудиторию. Обратитесь к завлабу."
+            )
+        student_rules_apply = student.role == UserRole.STUDENT
         if student_rules_apply and not student_can_access_lab_work(student, session.lab_work_id):
             raise BookingError("Лабораторная работа недоступна для вашей группы.")
         booking_discipline = self._resolve_booking_discipline(
             student,
             session.lab_work_id,
             discipline_id,
-            manual=manual,
-            skip_student_rules=skip_student_rules,
         )
         self._lock_for_booking(session)
         if manual:
             self._validate_manual_booking_window(session)
         else:
-            self._validate_booking_window(
-                session, skip_student_rules=skip_student_rules, student=student
-            )
+            self._validate_booking_window(session, student=student)
 
         if manual:
             self._validate_manual_booking_rules(student, session)
-        elif not skip_student_rules:
+        else:
             self._check_lab_work_and_discipline_limits(student, booking_discipline.pk, session.lab_work)
             if self._student_overlap_bookings(student, session).exists():
                 raise BookingError("У вас уже есть запись на пересекающееся время.")
@@ -306,39 +296,55 @@ class BookingService(BookingMutationsMixin):
         )
         self._record_status(booking, BookingStatus.BOOKED, "Создание записи")
         self._log_audit("booking.create", "Booking", booking.pk, {"session_id": session_id})
+        if manual:
+            self._log_manual_overflow(booking, session)
         self._notify(booking, "booked")
         return booking
 
+    def _log_manual_overflow(self, booking: Booking, session: LabSession) -> None:
+        """Зафиксировать ручную запись сверх лимита слота или аудитории."""
+        session_booked, room_other, _ = session_seat_counts(session)
+        room_total = room_other + session_booked
+        payload = {
+            "session_id": session.pk,
+            "session_booked": session_booked,
+            "session_capacity": session.capacity,
+            "room_total": room_total,
+            "room_capacity": session.room.capacity,
+            "student_id": booking.student_id,
+        }
+        if session_booked > session.capacity or room_total > session.room.capacity:
+            self._log_audit("booking.overflow", "Booking", booking.pk, payload)
+
     def _validate_manual_booking_rules(self, student: User, session: LabSession):
-        """Ручная запись: лимиты игнорируются, стенд — жёстко, остальное — предупреждения."""
-        if session.is_stand_blocked_by_other_lab_work():
+        """Ручная запись: жёстко блокируется только стенд, остальное — предупреждения.
+
+        Вместимость слота равна вместимости ЛР, поэтому отдельно про слот не
+        предупреждаем: единственное осмысленное ограничение — аудитория.
+        Факт превышения пишется в аудит при создании записи.
+        """
+        if session.is_stand_blocked():
             raise BookingError("Стенд уже занят на это время. Выберите другой интервал.")
         if self._student_overlap_bookings(student, session).exists():
             self.booking_warnings.append(self._overlap_warning_message(student, session))
-        booked_count = session.bookings.filter(current_status=BookingStatus.BOOKED).count()
-        if booked_count >= session.capacity:
+        session_booked, room_other, _ = session_seat_counts(session)
+        if room_other + session_booked >= session.room.capacity:
             self.booking_warnings.append(
-                f"Слот заполнен ({booked_count}/{session.capacity}) — запись сверх лимита."
+                f"Аудитория {session.room.number} заполнена "
+                f"({room_other + session_booked}/{session.room.capacity}) — запись сверх лимита."
             )
 
     def _enforce_capacity_limits(self, session: LabSession):
-        session_booked, lab_other, room_other, stand_blocked = session_seat_counts(session)
-        session_remaining, lab_remaining, room_remaining = seat_remainings(
+        session_booked, room_other, stand_blocked = session_seat_counts(session)
+        session_remaining, room_remaining = seat_remainings(
             session_capacity=session.capacity,
             session_booked=session_booked,
-            lab_work_capacity=session.lab_work.capacity,
-            lab_other_booked=lab_other,
             room_capacity=session.room.capacity,
             room_other_booked=room_other,
         )
         if session_remaining <= 0:
             raise BookingError("Нет свободных мест.")
-        if lab_remaining <= 0:
-            raise BookingError(
-                "Лимит мест для этой лабораторной работы исчерпан на выбранный интервал. "
-                "Выберите другую пару."
-            )
-        if room_remaining is not None and room_remaining <= 0:
+        if room_remaining <= 0:
             raise BookingError(
                 f"Аудитория {session.room.number} заполнена на это время. Выберите другую пару."
             )

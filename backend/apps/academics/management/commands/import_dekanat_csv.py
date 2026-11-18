@@ -2,14 +2,19 @@
 
 Типы: groups, disciplines, lab_bindings, curriculum, staff, teachers, students.
 Дедуп студентов: dekanat_id → student_id → email (роль STUDENT); email
-существующего аккаунта мигрируется на новый из CSV, если свободен. Привязки
-дисциплин к лабораториям — через LabDisciplineBinding (аудит), у ЛР — M2M.
+существующего аккаунта мигрируется на новый из CSV, если свободен. Пароли
+существующих пользователей не меняются без ``--reset-passwords``; роль и
+``is_staff`` существующего аккаунта не меняются — такая строка пропускается
+с причиной. Каждая строка пишется в отдельной транзакции, ошибки выводятся
+с номером строки, полем и причиной. Привязки дисциплин к лабораториям —
+через LabDisciplineBinding (аудит), у ЛР — M2M.
 """
 
 import csv
 import re
 
 from django.core.management.base import BaseCommand
+from django.db import transaction
 
 from apps.academics.models import (
     Department,
@@ -45,8 +50,20 @@ class Command(BaseCommand):
         parser.add_argument("--generated-domain", default="demo.local", help="Домен для авто-сгенерированных email")
         parser.add_argument("--import-batch-id", default="", help="Идентификатор пакета импорта (трассировка)")
         parser.add_argument("--only-groups", default="", help="Группы через запятую для частичного импорта")
+        parser.add_argument(
+            "--reset-passwords",
+            action="store_true",
+            help="Сбросить пароли существующих пользователей (по умолчанию пароль не меняется)",
+        )
 
     # --- утилиты -------------------------------------------------------------
+
+    def _skip(self, field: str, reason: str):
+        self.last_skip_reason = f"{field}: {reason}" if field else reason
+        return 0, 0
+
+    def _password_from_row(self, row) -> str:
+        return self._clean(row, "password", self.default_password) or self.default_password
 
     @staticmethod
     def _as_bool(value, default=False):
@@ -122,25 +139,36 @@ class Command(BaseCommand):
 
     def _upsert_user(self, row, *, role, is_staff, existing_user: User | None = None):
         email = self._resolve_email(row, role=role).lower()
-        defaults = {
-            "first_name": self._compose_first_name(row),
-            "last_name": self._clean(row, "last_name"),
-            "role": role,
-            "is_staff": is_staff,
-        }
-        if existing_user is not None:
-            user = existing_user
+        first_name = self._compose_first_name(row)
+        last_name = self._clean(row, "last_name")
+        user = existing_user or User.objects.filter(email=email).first()
+
+        if user is not None:
+            if user.role != role:
+                self._skip(
+                    "role",
+                    f"у пользователя {user.email} роль {user.role}, в CSV {role}; "
+                    "роль и is_staff не меняются",
+                )
+                return None, False
             if user.email != email and not User.objects.filter(email=email).exclude(pk=user.pk).exists():
                 user.email = email
-            for key, value in defaults.items():
-                setattr(user, key, value)
-            created = False
-        else:
-            user, created = User.objects.update_or_create(email=email, defaults=defaults)
-        password = self._clean(row, "password", self.default_password) or self.default_password
-        user.set_password(password)
-        user.save()
-        return user, created
+            user.first_name = first_name
+            user.last_name = last_name
+            if self.reset_passwords:
+                user.set_password(self._password_from_row(row))
+            user.save()
+            return user, False
+
+        user = User.objects.create_user(
+            email=email,
+            password=self._password_from_row(row),
+            first_name=first_name,
+            last_name=last_name,
+            role=role,
+            is_staff=is_staff,
+        )
+        return user, True
 
     def _attach_profile(self, user: User, training_center, *, bind_laboratory: bool):
         profile = UserProfile.objects.get_or_create(user=user)[0]
@@ -161,8 +189,10 @@ class Command(BaseCommand):
 
     def _import_group(self, row):
         name = self._clean(row, "name")
-        if not name or (self.only_groups and name not in self.only_groups):
-            return 0, 0
+        if not name:
+            return self._skip("name", "не заполнено")
+        if self.only_groups and name not in self.only_groups:
+            return self._skip("name", f"группа «{name}» не входит в --only-groups")
         _, created = StudentGroup.objects.update_or_create(
             name=name,
             defaults={"faculty": self._clean(row, "faculty"), "dekanat_id": self._clean(row, "dekanat_id")},
@@ -182,7 +212,7 @@ class Command(BaseCommand):
     def _import_discipline(self, row):
         title = self._clean(row, "title")
         if not title:
-            return 0, 0
+            return self._skip("title", "не заполнено")
         code = self._clean(row, "code")
         semester = self._resolve_semester(self.semester_name)
         defaults = {
@@ -208,13 +238,21 @@ class Command(BaseCommand):
     def _import_curriculum(self, row):
         group_name = self._clean(row, "group_name") or self._clean(row, "group")
         discipline_code = self._clean(row, "discipline_code") or self._clean(row, "code")
-        if not group_name or not discipline_code or (self.only_groups and group_name not in self.only_groups):
-            return 0, 0
+        if not group_name:
+            return self._skip("group_name", "не заполнено")
+        if not discipline_code:
+            return self._skip("discipline_code", "не заполнено")
+        if self.only_groups and group_name not in self.only_groups:
+            return self._skip("group_name", f"группа «{group_name}» не входит в --only-groups")
         semester = self._resolve_semester(self._clean(row, "semester") or self.semester_name)
         group = StudentGroup.objects.filter(name=group_name).first()
         discipline = self._resolve_discipline(code=discipline_code)
-        if semester is None or group is None or discipline is None:
-            return 0, 0
+        if semester is None:
+            return self._skip("semester", "семестр не найден")
+        if group is None:
+            return self._skip("group_name", f"группа «{group_name}» не найдена")
+        if discipline is None:
+            return self._skip("discipline_code", f"дисциплина «{discipline_code}» не найдена")
         _, created = GroupDisciplineLoad.objects.update_or_create(
             group=group,
             semester=semester,
@@ -233,14 +271,20 @@ class Command(BaseCommand):
         training_center = self._resolve_training_center(self._clean(row, "training_center_number"))
         discipline = self._resolve_discipline(code=discipline_code)
         laboratory = training_center.laboratories.first() if training_center else None
-        if not discipline_code or discipline is None or laboratory is None:
-            return 0, 0
+        if not discipline_code:
+            return self._skip("discipline_code", "не заполнено")
+        if training_center is None:
+            return self._skip("training_center_number", "учебный центр не найден")
+        if laboratory is None:
+            return self._skip("training_center_number", "у учебного центра нет лаборатории")
+        if discipline is None:
+            return self._skip("discipline_code", f"дисциплина «{discipline_code}» не найдена")
         created = self._bind_laboratory(discipline, training_center)
         lab_work_number = self._clean(row, "lab_work_number")
         if lab_work_number.isdigit():
             lab_work = LabWork.objects.filter(disciplines=discipline, number=int(lab_work_number)).first()
             if lab_work is None:
-                return 0, 0
+                return self._skip("lab_work_number", f"ЛР №{lab_work_number} не найдена у дисциплины")
             lab_work.laboratories.add(laboratory)
             lab_work.training_centers.add(training_center)
             return 0, 1
@@ -253,6 +297,8 @@ class Command(BaseCommand):
         user, created = self._upsert_user(
             row, role=UserRole.TEACHER, is_staff=self._as_bool(row.get("is_staff"), default=False)
         )
+        if user is None:
+            return 0, 0
         self._attach_profile(
             user, self._resolve_training_center(self._clean(row, "training_center_number")), bind_laboratory=False
         )
@@ -266,6 +312,8 @@ class Command(BaseCommand):
         user, created = self._upsert_user(
             row, role=role, is_staff=self._as_bool(row.get("is_staff"), default=True)
         )
+        if user is None:
+            return 0, 0
         self._attach_profile(
             user, self._resolve_training_center(self._clean(row, "training_center_number")), bind_laboratory=True
         )
@@ -274,8 +322,10 @@ class Command(BaseCommand):
 
     def _import_student(self, row):
         group_name = self._clean(row, "group")
-        if self.only_groups and group_name and group_name not in self.only_groups:
-            return 0, 0
+        if self.only_groups and group_name not in self.only_groups:
+            return self._skip(
+                "group", f"группа «{group_name or '—'}» не входит в --only-groups"
+            )
         dekanat_id, student_id = self._clean(row, "dekanat_id"), self._clean(row, "student_id")
         explicit_email = self._clean(row, "email").lower()
 
@@ -289,6 +339,8 @@ class Command(BaseCommand):
             existing_user = User.objects.filter(email=explicit_email, role=UserRole.STUDENT).first()
 
         user, created = self._upsert_user(row, role=UserRole.STUDENT, is_staff=False, existing_user=existing_user)
+        if user is None:
+            return 0, 0
         defaults = {
             "group_name": group_name,
             "dekanat_id": dekanat_id,
@@ -310,6 +362,8 @@ class Command(BaseCommand):
         self.import_batch_id = options["import_batch_id"]
         self.semester_name = options["semester"]
         self.only_groups = {part for part in options["only_groups"].split(",") if part.strip()}
+        self.reset_passwords = options["reset_passwords"]
+        self.last_skip_reason = ""
 
         handlers = {
             "students": self._import_student,
@@ -322,10 +376,26 @@ class Command(BaseCommand):
         }
         counts = {"created": 0, "updated": 0, "skipped": 0}
         with open(options["csv_path"], newline="", encoding=options["encoding"]) as csv_file:
-            for row in csv.DictReader(csv_file, delimiter=options["delimiter"]):
-                created, updated = handlers[options["type"]](row)
-                key = "created" if created else "updated" if updated else "skipped"
-                counts[key] += 1
+            reader = csv.DictReader(csv_file, delimiter=options["delimiter"])
+            for line_number, row in enumerate(reader, start=2):
+                self.last_skip_reason = ""
+                try:
+                    with transaction.atomic():
+                        created, updated = handlers[options["type"]](row)
+                except Exception as exc:  # строка не должна ронять весь файл
+                    counts["skipped"] += 1
+                    self.stdout.write(
+                        self.style.ERROR(f"Строка {line_number}: ошибка — {exc}")
+                    )
+                    continue
+                if created or updated:
+                    counts["created" if created else "updated"] += 1
+                    continue
+                counts["skipped"] += 1
+                reason = self.last_skip_reason or "строка не дала данных для импорта"
+                self.stdout.write(
+                    self.style.WARNING(f"Строка {line_number}: пропущена — {reason}")
+                )
         self.stdout.write(self.style.SUCCESS("Импорт завершён."))
         self.stdout.write(f"Создано: {counts['created']}")
         self.stdout.write(f"Обновлено: {counts['updated']}")

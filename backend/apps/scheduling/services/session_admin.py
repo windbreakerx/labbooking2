@@ -11,8 +11,9 @@ from datetime import date, datetime, time, timedelta
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
-from apps.academics.models import LabWork, Semester, StudentGroup
+from apps.academics.models import LabWork, LabWorkBookingRelease, Semester, StudentGroup
 from apps.bookings.models import (
     AuditLog,
     Booking,
@@ -24,7 +25,6 @@ from apps.scheduling.models import (
     LabSession,
     LabSessionBookingMode,
     LabSessionStatus,
-    LabStand,
     Room,
 )
 from apps.scheduling.services.slot_grid import (
@@ -44,7 +44,7 @@ def _parse_datetime(value) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return value
-    parsed = timezone.parse_datetime(value)
+    parsed = parse_datetime(value)
     if parsed is not None:
         return parsed
     return None
@@ -106,6 +106,8 @@ def _resolve_lab_work(data: dict, laboratory) -> LabWork:
         raise SessionError("Лабораторная работа не найдена.")
     if not lab_work.is_published:
         raise SessionError("Лабораторная работа не опубликована.")
+    if lab_work.is_archived:
+        raise SessionError("Лабораторная работа в архиве.")
     if not lab_work.laboratories.filter(pk=laboratory.pk).exists():
         raise SessionError("Лабораторная работа не привязана к вашей лаборатории.")
     return lab_work
@@ -169,28 +171,52 @@ def _resolve_allowed_groups(data: dict) -> list[StudentGroup]:
     return groups
 
 
-def _resolve_used_stands(data: dict, room: Room) -> list[LabStand]:
-    raw = data.get("used_stands") or []
-    if isinstance(raw, str):
-        raw = [item for item in raw.split(",") if item.strip()]
-    ids = []
-    for item in raw:
-        try:
-            ids.append(int(item))
-        except (ValueError, TypeError):
-            raise SessionError(f"Некорректный идентификатор стенда: {item}.")
-    if not ids:
-        return []
-    stands = list(LabStand.objects.filter(pk__in=ids, room_id=room.pk))
-    if len(stands) != len(ids):
-        raise SessionError("Некоторые стенды не найдены в выбранной аудитории.")
-    return stands
+def _validate_stands(lab_work: LabWork, room: Room) -> None:
+    """Если у ЛР есть стенды, в аудитории должен стоять хотя бы один из них."""
+    if not lab_work.stands.exists():
+        return
+    if not lab_work.stands.filter(room=room).exists():
+        raise SessionError(
+            f"В аудитории №{room.number} нет стенда этой лабораторной работы."
+        )
 
 
-def _default_capacity(lab_work: LabWork, stands: list[LabStand]) -> int:
-    if stands:
-        return max(1, sum(stand.capacity for stand in stands))
-    return lab_work.capacity
+def _validate_schedule_conflicts(
+    *,
+    lab_work: LabWork,
+    room: Room,
+    teacher: User | None,
+    starts_at: datetime,
+    ends_at: datetime,
+    session: LabSession | None = None,
+) -> None:
+    """Пересечения: преподаватель, стенды ЛР в этой комнате."""
+    overlapping = LabSession.objects.filter(
+        starts_at__lt=ends_at,
+        ends_at__gt=starts_at,
+    ).exclude(status=LabSessionStatus.CANCELLED)
+    if session is not None:
+        overlapping = overlapping.exclude(pk=session.pk)
+
+    if teacher is not None and overlapping.filter(teacher=teacher).exists():
+        raise SessionError("У преподавателя уже есть пара в это время.")
+
+    stand_ids = set(lab_work.stands.values_list("id", flat=True))
+    if not stand_ids:
+        return
+    _validate_stands(lab_work, room)
+    if (
+        overlapping.exclude(lab_work_id=lab_work.pk)
+        .filter(lab_work__stands__id__in=stand_ids)
+        .exists()
+    ):
+        raise SessionError("Стенд этой лабораторной работы занят другой работой в это время.")
+    parallel = overlapping.filter(lab_work_id=lab_work.pk, room=room).count()
+    stands_in_room = lab_work.stands.filter(room=room).count()
+    if parallel >= stands_in_room:
+        raise SessionError(
+            "Все стенды этой лабораторной работы в аудитории заняты в это время."
+        )
 
 
 def _is_pair_time(moment: datetime) -> bool:
@@ -227,14 +253,6 @@ def _validate_semester_bounds(starts_at: datetime, ends_at: datetime, semester: 
 
 def _active_booking_count(session: LabSession) -> int:
     return session.bookings.filter(current_status=BookingStatus.BOOKED).count()
-
-
-def _booked_count_guard(session: LabSession, new_capacity: int) -> None:
-    booked = _active_booking_count(session)
-    if new_capacity < booked:
-        raise SessionError(
-            f"Нельзя уменьшить места ниже числа активных записей ({booked})."
-        )
 
 
 def _create_group_bookings(session: LabSession, actor: User | None) -> int:
@@ -291,12 +309,13 @@ def clean_session_payload(
     teacher = _resolve_teacher(data)
 
     starts_at = _resolve_starts_at(data)
-    _validate_slot_time(starts_at, lab_work)
-    ends_at = starts_at + timedelta(minutes=lab_work.duration_minutes)
-    _validate_semester_bounds(starts_at, ends_at, semester)
 
     if session is None and starts_at <= timezone.now():
         raise SessionError("Нельзя создавать слот в прошлом.")
+
+    _validate_slot_time(starts_at, lab_work)
+    ends_at = starts_at + timedelta(minutes=lab_work.duration_minutes)
+    _validate_semester_bounds(starts_at, ends_at, semester)
 
     mode = data.get("booking_mode", LabSessionBookingMode.INDIVIDUAL)
     if mode not in LabSessionBookingMode.values:
@@ -304,27 +323,23 @@ def clean_session_payload(
 
     occupant_group = _resolve_occupant_group(data)
     allowed_groups = _resolve_allowed_groups(data)
-    used_stands = _resolve_used_stands(data, room)
 
     if mode == LabSessionBookingMode.GROUP:
         if occupant_group is None:
             raise SessionError("Для групповой брони укажите группу-оккупант.")
         if allowed_groups:
             raise SessionError("Групповая бронь не совместима с ограничением по группам.")
-        capacity = occupant_group.students.count()
-    else:
-        if occupant_group is not None:
-            raise SessionError("Группа-оккупант допустима только для групповой брони.")
-        raw_capacity = (data.get("capacity") or "").strip() if isinstance(data.get("capacity"), str) else data.get("capacity")
-        if raw_capacity in (None, ""):
-            capacity = _default_capacity(lab_work, used_stands)
-        else:
-            try:
-                capacity = int(raw_capacity)
-            except (ValueError, TypeError):
-                raise SessionError("Вместимость должна быть целым числом.")
-        if capacity < 1:
-            raise SessionError("Вместимость не меньше 1.")
+    elif occupant_group is not None:
+        raise SessionError("Группа-оккупант допустима только для групповой брони.")
+
+    _validate_schedule_conflicts(
+        lab_work=lab_work,
+        room=room,
+        teacher=teacher,
+        starts_at=starts_at,
+        ends_at=ends_at,
+        session=session,
+    )
 
     # Редактирование слота с активными бронями
     if session is not None:
@@ -351,7 +366,6 @@ def clean_session_payload(
             and booked
         ):
             raise SessionError("Нельзя менять группу-оккупанта при активных записях.")
-        _booked_count_guard(session, capacity)
 
     return {
         "lab_work": lab_work,
@@ -360,11 +374,9 @@ def clean_session_payload(
         "teacher": teacher,
         "starts_at": starts_at,
         "ends_at": ends_at,
-        "capacity": capacity,
         "booking_mode": mode,
         "occupant_group": occupant_group,
         "allowed_groups": allowed_groups,
-        "used_stands": used_stands,
     }
 
 
@@ -378,15 +390,18 @@ def create_session(laboratory, data: dict, *, actor: User | None = None) -> LabS
         teacher=payload["teacher"],
         starts_at=payload["starts_at"],
         ends_at=payload["ends_at"],
-        capacity=payload["capacity"],
         status=LabSessionStatus.OPEN,
         booking_mode=payload["booking_mode"],
         occupant_group=payload["occupant_group"],
     )
-    if payload["used_stands"]:
-        session.used_stands.set(payload["used_stands"])
     if payload["allowed_groups"]:
         session.allowed_student_groups.set(payload["allowed_groups"])
+
+    LabWorkBookingRelease.objects.get_or_create(
+        lab_work=session.lab_work,
+        semester=session.semester,
+        defaults={"booking_opens_at": timezone.now()},
+    )
 
     if session.booking_mode == LabSessionBookingMode.GROUP:
         _create_group_bookings(session, actor)
@@ -417,15 +432,9 @@ def update_session(
     session.teacher = payload["teacher"]
     session.starts_at = payload["starts_at"]
     session.ends_at = payload["ends_at"]
-    session.capacity = payload["capacity"]
     session.booking_mode = payload["booking_mode"]
     session.occupant_group = payload["occupant_group"]
     session.save()
-
-    if payload["used_stands"]:
-        session.used_stands.set(payload["used_stands"])
-    else:
-        session.used_stands.clear()
 
     if payload["allowed_groups"]:
         session.allowed_student_groups.set(payload["allowed_groups"])

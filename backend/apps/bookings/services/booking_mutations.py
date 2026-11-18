@@ -9,6 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.bookings.models import Booking, BookingStatus, CancelSource
+from apps.bookings.scope import staff_can_modify_room
 from apps.bookings.services.attendance import adjust_no_show_count, resolve_booking_laboratory
 from apps.bookings.services.errors import BookingError
 from apps.bookings.services.retry import retry_on_deadlock
@@ -23,7 +24,7 @@ STATUSES_WITHOUT_STAFF_NOTE = frozenset({BookingStatus.NO_SHOW, BookingStatus.RE
 STATUS_TRANSITIONS: dict[str, set[str]] = {
     BookingStatus.BOOKED: {BookingStatus.VISITED, BookingStatus.NO_SHOW, BookingStatus.REACCESS},
     BookingStatus.NO_SHOW: {BookingStatus.REACCESS, BookingStatus.VISITED},
-    BookingStatus.REACCESS: {BookingStatus.VISITED},
+    BookingStatus.REACCESS: set(),
 }
 TERMINAL_STATUSES = {
     BookingStatus.VISITED,
@@ -40,6 +41,16 @@ def _schedule_promotion(session_id: int) -> None:
 
 class BookingMutationsMixin:
     """Зависит от BookingService: actor, _record_status, _log_audit, _notify."""
+
+    def _require_staff_room(self, room) -> None:
+        if (
+            self.actor
+            and staff_can_modify_bookings(self.actor)
+            and not staff_can_modify_room(self.actor, room)
+        ):
+            raise BookingError(
+                "Нет прав на изменение записей в этой аудитории. Обратитесь к завлабу."
+            )
 
     def _require_staff_note(self, status: str, note: str) -> str:
         cleaned = (note or "").strip()
@@ -76,7 +87,9 @@ class BookingMutationsMixin:
             return self._cancel_booking_impl(*args, **kwargs)
 
     def _cancel_booking_impl(self, booking: Booking, by_staff: bool, note: str) -> Booking:
-        booking = Booking.objects.select_for_update().get(pk=booking.pk)
+        booking = Booking.objects.select_for_update().select_related("room").get(pk=booking.pk)
+        if by_staff:
+            self._require_staff_room(booking.room)
         if booking.current_status != BookingStatus.BOOKED:
             raise BookingError("Можно отменить только активную запись.")
         self._validate_cancel_window(booking, by_staff=by_staff)
@@ -111,6 +124,7 @@ class BookingMutationsMixin:
         )
         if booking.current_status != BookingStatus.BOOKED:
             raise BookingError("Отменить слот можно только для активной записи.")
+        self._require_staff_room(booking.room)
         status_note = self._require_staff_note(BookingStatus.SLOT_CANCELLED, note) or "Слот отменён"
         self._record_status(booking, BookingStatus.SLOT_CANCELLED, status_note)
         self._log_audit(
@@ -139,6 +153,7 @@ class BookingMutationsMixin:
             .select_related("room", "lab_work", "discipline", "student")
             .get(pk=booking.pk)
         )
+        self._require_staff_room(booking.room)
         if new_status == booking.current_status:
             return booking
         if booking.current_status in TERMINAL_STATUSES:

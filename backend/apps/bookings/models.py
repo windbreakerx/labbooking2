@@ -30,9 +30,9 @@ class RegistrationType(models.TextChoices):
 
 class Booking(models.Model):
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bookings")
-    lab_session = models.ForeignKey(LabSession, on_delete=models.CASCADE, related_name="bookings")
-    lab_work = models.ForeignKey(LabWork, on_delete=models.CASCADE, related_name="bookings")
-    discipline = models.ForeignKey(Discipline, on_delete=models.CASCADE, related_name="bookings")
+    lab_session = models.ForeignKey(LabSession, on_delete=models.PROTECT, related_name="bookings")
+    lab_work = models.ForeignKey(LabWork, on_delete=models.PROTECT, related_name="bookings")
+    discipline = models.ForeignKey(Discipline, on_delete=models.PROTECT, related_name="bookings")
     room = models.ForeignKey(Room, on_delete=models.PROTECT, related_name="bookings")
     scheduled_at = models.DateTimeField("Дата и время ЛР")
     current_status = models.CharField(max_length=16, choices=BookingStatus.choices, default=BookingStatus.BOOKED)
@@ -53,6 +53,13 @@ class Booking(models.Model):
         indexes = [
             models.Index(fields=["student", "discipline", "current_status"]),
             models.Index(fields=["scheduled_at", "current_status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "lab_session"],
+                condition=models.Q(current_status="BOOKED"),
+                name="bookings_one_active_per_slot",
+            ),
         ]
 
     def __str__(self):

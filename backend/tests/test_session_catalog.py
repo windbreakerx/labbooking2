@@ -93,10 +93,13 @@ def build_catalog_world():
     work_b = work(2, capacity=5)
     work_c1 = work(3, capacity=4)
     work_c2 = work(4)
-    work_d1 = work(5, capacity=2, primary_stand=stand)
-    work_d2 = work(6, capacity=2, primary_stand=stand)
+    work_d1 = work(5, capacity=2)
+    work_d2 = work(6, capacity=2)
+    work_d1.stands.add(stand)
+    work_d2.stands.add(stand)
+    work_full = work(7, capacity=1)
 
-    def slot(room, lab_work, day, hour, minute, *, cap=3, entry=True):
+    def slot(room, lab_work, day, hour, minute, *, entry=True):
         starts = timezone.make_aware(datetime(2026, 7, day, hour, minute), tz)
         session = LabSession.objects.create(
             lab_work=lab_work,
@@ -104,29 +107,28 @@ def build_catalog_world():
             semester=semester,
             starts_at=starts,
             ends_at=starts + timedelta(minutes=90),
-            capacity=cap,
             status=LabSessionStatus.OPEN,
         )
         if entry:
             create_schedule_entry_for_session(session, lab_work=lab_work)
         return session
 
-    s_a1 = slot(room_a, work_a, 2, 10, 35)  # чт: 2 брони, 1 место
+    s_a1 = slot(room_a, work_a, 2, 10, 35)  # 2 брони, остаток 2 (лимит комнаты)
     s_a2 = slot(room_a, work_a, 2, 12, 35, entry=False)  # без записи расписания
     s_a3 = slot(room_a, work_a, 4, 12, 35)  # суббота с расписанием
-    s_full = slot(room_a, work_a, 3, 12, 35, cap=1)  # заполнен — виден ручной записи
+    s_full = slot(room_a, work_full, 3, 12, 35)  # ЛР на 1 место — заполнен
     s_current = slot(room_a, work_a, 1, 12, 35, entry=False)  # идущая пара
     s_past = slot(room_a, work_a, 1, 10, 35, entry=False)  # завершился
     s_holiday = slot(room_a, work_a, 6, 10, 35)  # праздник 06.07
     s_far = slot(room_a, work_a, 20, 10, 35)  # за горизонтом
-    s_b1 = slot(room_b, work_b, 2, 10, 35, cap=2)  # окно лаборатории B
-    s_b2 = slot(room_b, work_b, 3, 10, 35, cap=2)  # за горизонтом лаборатории B
+    s_b1 = slot(room_b, work_b, 2, 10, 35)  # окно лаборатории B
+    s_b2 = slot(room_b, work_b, 3, 10, 35)  # за горизонтом лаборатории B
     s_busy = slot(room_b, work_b, 2, 12, 35)  # здесь бронь студента
     s_hidden = slot(room_b, work_b, 2, 12, 50)  # пересекается с ней
-    s_c1 = slot(room_c, work_c1, 2, 14, 15, cap=5)  # 2 брони
-    s_c2 = slot(room_c, work_c2, 2, 14, 45, cap=5)  # аудитория исчерпана пересечением
-    s_d1 = slot(room_a, work_d1, 3, 10, 35, cap=2)  # 1 бронь
-    s_d2 = slot(room_a, work_d2, 3, 11, 5, cap=2)  # стенд занят другой ЛР
+    s_c1 = slot(room_c, work_c1, 2, 14, 15)  # 2 брони в комнате на 2 места
+    s_c2 = slot(room_c, work_c2, 2, 14, 45)  # аудитория исчерпана пересечением
+    s_d1 = slot(room_a, work_d1, 3, 10, 35)  # 1 бронь
+    s_d2 = slot(room_a, work_d2, 3, 11, 5)  # стенд занят другой ЛР
 
     Holiday.objects.create(date=date(2026, 7, 6), name="День каталога")
 
@@ -155,6 +157,7 @@ def build_catalog_world():
         "fill1": fill1,
         "room_a": room_a,
         "work_a": work_a,
+        "work_full": work_full,
         "make_slot": slot,
         "s_a1": s_a1,
         "s_a2": s_a2,
@@ -245,10 +248,10 @@ class TestStudentCatalog:
         assert world["s_b2"].pk not in student_ids  # горизонт лаборатории B
         assert world["s_c2"].pk not in student_ids  # аудитория исчерпана пересечением
         assert world["s_d2"].pk not in student_ids  # стенд занят другой ЛР
-        assert results["student"][world["s_a1"].pk] == (1, 2)
-        assert results["viewer"][world["s_busy"].pk] == (2, 1)
+        assert results["student"][world["s_a1"].pk] == (2, 2)
+        assert results["viewer"][world["s_busy"].pk] == (3, 1)
         assert results["viewer"][world["s_hidden"].pk] == (3, 0)
-        assert results["viewer"][world["s_c1"].pk] == (2, 2)
+        assert world["s_c1"].pk not in viewer_ids  # комната на 2 места уже заполнена
         assert world["s_busy"].pk in viewer_ids
         assert world["s_hidden"].pk in viewer_ids
 
@@ -257,14 +260,14 @@ class TestStudentCatalog:
         who = world["viewer"]
         who.profile.student_group  # прогрев кэшей связей студента
 
-        with django_assert_num_queries(9):
+        with django_assert_num_queries(10):
             student_bookable_slots(student=who, now=world["now"])
 
         for day in (8, 9, 10):
             session = world["make_slot"](world["room_a"], world["work_a"], day, 14, 15)
             seed_manual_booking(actor=world["actor"], student=world["fill1"], session=session)
 
-        with django_assert_num_queries(9):
+        with django_assert_num_queries(10):
             student_bookable_slots(student=who, now=world["now"])
 
 
@@ -295,20 +298,24 @@ class TestStaffManualCatalog:
         result = {slot.session.pk: (slot.available_seats, slot.booked_count) for slot in slots}
         assert result == expected
 
-        assert result[world["s_full"].pk] == (0, 1)  # заполненный слот доступен ручной записи
-        assert result[world["s_current"].pk] == (3, 0)  # идущая пара разрешена
-        assert result[world["s_a2"].pk] == (3, 0)  # whitelist для ручной записи не действует
+        full_slots = staff_manual_slots(world["work_full"].pk, now=now)
+        full_result = {
+            slot.session.pk: (slot.available_seats, slot.booked_count) for slot in full_slots
+        }
+        assert full_result[world["s_full"].pk] == (0, 1)  # заполненный слот доступен ручной записи
+        assert result[world["s_current"].pk] == (4, 0)  # идущая пара разрешена
+        assert result[world["s_a2"].pk] == (4, 0)  # whitelist для ручной записи не действует
         assert world["s_holiday"].pk not in result
         assert world["s_past"].pk not in result
         assert world["s_far"].pk not in result
 
     def test_query_count_is_constant(self, django_assert_num_queries):
         world = build_catalog_world()
-        with django_assert_num_queries(3):
+        with django_assert_num_queries(4):
             staff_manual_slots(world["work_a"].pk, now=world["now"])
         world["make_slot"](world["room_a"], world["work_a"], 9, 14, 15)
         world["make_slot"](world["room_a"], world["work_a"], 10, 14, 15)
-        with django_assert_num_queries(3):
+        with django_assert_num_queries(4):
             staff_manual_slots(world["work_a"].pk, now=world["now"])
 
 

@@ -13,12 +13,7 @@ from django.views import View
 
 from apps.academics.models import Semester, StudentGroup
 from apps.academics.scope import laboratory_people_qs
-from apps.scheduling.models import (
-    LabSession,
-    LabSessionBookingMode,
-    LabSessionStatus,
-    LabStand,
-)
+from apps.scheduling.models import LabSession, LabSessionBookingMode, LabSessionStatus
 from apps.scheduling.services.session_admin import (
     SessionError,
     cancel_session,
@@ -112,14 +107,12 @@ def _form_context(laboratory, room, semester) -> dict:
         laboratory_people_qs(laboratory).filter(role__in=[UserRole.TEACHER, UserRole.LAB_HEAD])
     )
     groups = list(StudentGroup.objects.order_by("name"))
-    stands = list(LabStand.objects.filter(room__laboratory=laboratory).order_by("room__number", "name"))
     return {
         "lab_works": lab_works,
         "rooms": rooms,
         "semesters": semesters,
         "teachers": teachers,
         "student_groups": groups,
-        "stands": stands,
         "booking_modes": LabSessionBookingMode.choices,
         "weekday_labels": WEEKDAY_LABELS,
         "selected_room": room,
@@ -179,14 +172,13 @@ class LabHeadScheduleView(PortalLaboratoryMixin, View):
             )
             .exclude(status=LabSessionStatus.CANCELLED)
             .select_related("lab_work", "room", "room__training_center", "teacher", "occupant_group")
-            .prefetch_related("allowed_student_groups", "used_stands")
+            .prefetch_related("allowed_student_groups")
             .order_by("starts_at")
         )
         for session in sessions:
             session.allowed_group_ids = set(
                 session.allowed_student_groups.values_list("pk", flat=True)
             )
-            session.used_stand_ids = set(session.used_stands.values_list("pk", flat=True))
         return sessions
 
     def _redirect_back(self, request, room, semester):

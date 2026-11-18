@@ -15,7 +15,7 @@ from apps.users.models import User, UserProfile, UserRole
 
 LAB_NAME = "Комплексная учебная лаборатория нефтегазового факультета"
 SEMESTER_NAME = "Пилот 2026/2027 (нефтегаз)"
-PILOT_PASSWORD = "pilot123"
+PILOT_PASSWORD = "pilot123"  # nosec B105
 DEPARTMENTS = [
     "Кафедра транспорта и хранения нефти и газа",
     "Кафедра бурения скважин",

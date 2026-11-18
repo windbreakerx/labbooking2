@@ -1,20 +1,23 @@
-"""Архивация старых CANCELLED-слотов и AuditLog.
+"""Уборка старых отменённых слотов и записей аудита.
 
-Запускать раз в семестр (например, cron или однократный job).
-По умолчанию удаляет записи старше 365 дней; управляется опцией ``--days``.
+По умолчанию команда только считает и показывает, что будет удалено.
+Удаление выполняется с ``--apply``. Слоты, у которых есть записи студентов
+или история статусов, не удаляются: после перехода ``Booking.lab_session``
+на ``PROTECT`` это ещё и запрещено на уровне базы.
 """
 
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
-from apps.bookings.models import AuditLog
+from apps.bookings.models import AuditLog, Booking
 from apps.scheduling.models import LabSession, LabSessionStatus
 
 
 class Command(BaseCommand):
-    help = "Архивировать (удалить) старые CANCELLED-слоты и записи AuditLog"
+    help = "Показать и (с --apply) удалить старые CANCELLED-слоты без истории и записи AuditLog"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -24,34 +27,48 @@ class Command(BaseCommand):
             help="Сколько дней хранить записи (по умолчанию 365).",
         )
         parser.add_argument(
-            "--dry-run",
+            "--apply",
             action="store_true",
-            help="Подсчитать, но не удалять.",
+            help="Выполнить удаление. Без флага команда только показывает отчёт.",
         )
 
     def handle(self, *args, **options):
         days = options["days"]
-        dry_run = options["dry_run"]
+        apply_changes = options["apply"]
         cutoff = timezone.now() - timedelta(days=days)
 
-        sessions_qs = LabSession.objects.filter(
+        old_sessions = LabSession.objects.filter(
             status=LabSessionStatus.CANCELLED,
             starts_at__lt=cutoff,
         )
+        deletable_sessions = old_sessions.annotate(
+            has_bookings=Exists(Booking.objects.filter(lab_session=OuterRef("pk")))
+        ).filter(has_bookings=False)
         audit_qs = AuditLog.objects.filter(created_at__lt=cutoff)
 
-        session_count = sessions_qs.count()
+        total_sessions = old_sessions.count()
+        deletable_count = deletable_sessions.count()
         audit_count = audit_qs.count()
+        kept_count = total_sessions - deletable_count
 
-        action = "Будет удалено" if dry_run else "Удалено"
         self.stdout.write(
             self.style.NOTICE(
-                f"{action}: {session_count} CANCELLED-слотов и {audit_count} записей AuditLog "
-                f"старше {days} дней (cutoff {cutoff:%Y-%m-%d %H:%M})."
+                f"Старше {days} дней (до {cutoff:%Y-%m-%d %H:%M}): "
+                f"отменённых слотов {total_sessions}, из них без записей {deletable_count}, "
+                f"останутся с историей {kept_count}; записей аудита {audit_count}."
             )
         )
 
-        if not dry_run:
-            sessions_qs.delete()
-            audit_qs.delete()
-            self.stdout.write(self.style.SUCCESS("Архивация завершена."))
+        if not apply_changes:
+            self.stdout.write(
+                "Это отчёт. Для удаления запустите команду с --apply."
+            )
+            return
+
+        deleted_sessions = deletable_sessions.delete()[0]
+        deleted_audit = audit_qs.delete()[0]
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Удалено объектов: слотов и связанных записей {deleted_sessions}, аудита {deleted_audit}."
+            )
+        )

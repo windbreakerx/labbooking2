@@ -25,14 +25,20 @@ def create_lab_work(*disciplines, **kwargs) -> LabWork:
 
 def open_booking_release_for_session(session, *, lab_work=None) -> LabWorkBookingRelease:
     """Открыть запись на лабораторную работу в семестре слота (для тестов)."""
+    from datetime import time as dt_time
+
     lab_work = lab_work or session.lab_work
+    tz = timezone.get_current_timezone()
+    opens_at = timezone.make_aware(
+        datetime.combine(session.semester.start_date, dt_time.min), tz
+    )
     release, _ = LabWorkBookingRelease.objects.get_or_create(
         lab_work=lab_work,
         semester=session.semester,
-        defaults={"booking_opens_at": timezone.now() - timezone.timedelta(days=1)},
+        defaults={"booking_opens_at": opens_at},
     )
     if release.booking_opens_at is None or release.booking_opens_at > timezone.now():
-        release.booking_opens_at = timezone.now() - timezone.timedelta(days=1)
+        release.booking_opens_at = opens_at
         release.save(update_fields=["booking_opens_at"])
     return release
 
@@ -54,10 +60,6 @@ def _disable_day_open_gate(monkeypatch):
     )
     monkeypatch.setattr(
         "apps.bookings.services.session_catalog.is_day_open_for_booking",
-        lambda *_args, **_kwargs: True,
-    )
-    monkeypatch.setattr(
-        "apps.bookings.services.booking.is_day_open_for_booking",
         lambda *_args, **_kwargs: True,
     )
 
@@ -90,7 +92,7 @@ def make_student(email, student_group):
     return assign_student_group(
         User.objects.create_user(
             email=email,
-            password="pass",
+            password="pass",  # nosec B106
             first_name=email[0].upper(),
             last_name=email.split("@")[0].title(),
             role=UserRole.STUDENT,
@@ -144,14 +146,17 @@ def inactive_discipline(db):
 
 
 @pytest.fixture
-def lab_work(discipline):
-    return create_lab_work(
+def lab_work(discipline, room):
+    lab_work = create_lab_work(
         discipline,
         number=1,
         title="ЛР 1",
         duration_minutes=90,
+        capacity=2,
         is_published=True,
     )
+    lab_work.laboratories.add(room.laboratory)
+    return lab_work
 
 
 @pytest.fixture
@@ -181,7 +186,6 @@ def session(lab_work, room, semester):
         semester=semester,
         starts_at=starts,
         ends_at=starts + timezone.timedelta(minutes=90),
-        capacity=2,
         status=LabSessionStatus.OPEN,
     )
     create_schedule_entry_for_session(session, lab_work=lab_work)
@@ -197,7 +201,6 @@ def far_session(lab_work, room, semester):
         semester=semester,
         starts_at=starts,
         ends_at=starts + timezone.timedelta(minutes=90),
-        capacity=5,
         status=LabSessionStatus.OPEN,
     )
     create_schedule_entry_for_session(session, lab_work=lab_work)
@@ -215,7 +218,7 @@ def student_group(discipline):
 def student(db, student_group):
     user = User.objects.create_user(
         email="s@stud.spmi.ru",
-        password="pass",
+        password="pass",  # nosec B106
         first_name="A",
         last_name="B",
         role=UserRole.STUDENT,
@@ -228,7 +231,7 @@ def student(db, student_group):
 def staff(db, room):
     user = User.objects.create_user(
         email="staff@spmi.ru",
-        password="pass",
+        password="pass",  # nosec B106
         first_name="S",
         last_name="T",
         role=UserRole.LAB_ADMIN,
@@ -237,4 +240,6 @@ def staff(db, room):
     UserProfile.objects.create(
         user=user, training_center=room.training_center, laboratory=room.laboratory
     )
+    room.default_lab_staff = user
+    room.save(update_fields=["default_lab_staff"])
     return user

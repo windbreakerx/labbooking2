@@ -54,18 +54,24 @@ class LabDisciplineBindingInline(admin.TabularInline):
 
 @admin.register(Discipline)
 class DisciplineAdmin(admin.ModelAdmin):
-    list_display = ("title", "code", "short_code", "department", "semester", "is_published")
-    list_filter = ("semester", "department", "is_published")
+    list_display = ("title", "code", "short_code", "department", "semester", "is_published", "is_archived")
+    list_filter = ("semester", "department", "is_published", "is_archived")
     search_fields = ("title", "code", "short_code")
     inlines = [LabDisciplineBindingInline]
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(LabWork)
 class LabWorkAdmin(admin.ModelAdmin):
-    list_display = ("title", "code", "number", "duration_minutes", "capacity", "required_sessions", "primary_stand", "is_published")
-    list_filter = ("is_published", "training_centers", "disciplines")
+    list_display = ("title", "code", "number", "duration_minutes", "capacity", "required_sessions", "is_published", "is_archived")
+    list_filter = ("is_published", "is_archived", "training_centers", "disciplines")
     search_fields = ("title", "code")
-    filter_horizontal = ("disciplines", "training_centers", "laboratories")
+    filter_horizontal = ("disciplines", "training_centers", "laboratories", "stands")
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(LabWorkMethodics)

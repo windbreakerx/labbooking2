@@ -8,6 +8,12 @@
   {% endif %}
 </div>
 
+{% if show_no_rooms_hint %}
+  <div class="card">
+    <p class="field-hint">За вами не закреплена ни одна аудитория, поэтому менять записи нельзя. Обратитесь к завлабу.</p>
+  </div>
+{% endif %}
+
 <form class="card filter-bar" method="get">
   <div class="filter-bar__field">
     <label for="f-status">Статус</label>
@@ -83,7 +89,7 @@
               </td>
               <td><span class="badge badge--{{ booking.current_status|lower }}">{{ booking.get_current_status_display }}</span></td>
               <td>
-                {% if can_modify and row.transitions %}
+                {% if row.can_modify and row.transitions %}
                   <details class="row-actions">
                     <summary>Изменить</summary>
                     <form class="row-actions__form" method="post" action="{% url 'staff-booking-status' booking.pk %}">
@@ -110,6 +116,17 @@
       </tbody>
     </table>
   </div>
+  {% if page_obj.paginator.num_pages > 1 %}
+    <div class="cluster">
+      {% if page_obj.has_previous %}
+        <a class="button button--secondary button--sm" href="?{{ pagination_query }}page={{ page_obj.previous_page_number }}">Назад</a>
+      {% endif %}
+      <span class="muted">Страница {{ page_obj.number }} из {{ page_obj.paginator.num_pages }}</span>
+      {% if page_obj.has_next %}
+        <a class="button button--secondary button--sm" href="?{{ pagination_query }}page={{ page_obj.next_page_number }}">Вперёд</a>
+      {% endif %}
+    </div>
+  {% endif %}
 {% else %}
   <div class="empty-state">
     <strong>Записей нет</strong>

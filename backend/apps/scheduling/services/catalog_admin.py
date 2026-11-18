@@ -1,13 +1,14 @@
-"""Минимальный CRUD каталога лаборатории (день 7): аудитории и лабораторные работы.
+"""CRUD каталога лаборатории: аудитории, лабораторные работы, стенды.
 
-Комнаты: только базовые поля и флаг ``is_blocked``
-(дисциплины комнаты, фото и дежурный по умолчанию — срез этапа, есть в админке).
-Каскады блокировки/разблокировки и sync duration ЛР orchestrated
-во view (apps/scheduling/views/catalog.py) — сервис не зависит от bookings.
+Комнаты: базовые поля и флаг ``is_blocked``; изменение вместимости пишется
+в аудит (по ней считается лимит мест в зале). Стенды принадлежат ЛР и стоят
+в конкретных аудиториях — по ним ловится параллельная пара без установки.
+Каскады блокировки и sync duration ЛР выполняются во view
+(apps/scheduling/views/catalog.py) — сервис не зависит от bookings.
 """
 
 from apps.academics.models import ALLOWED_LAB_DURATIONS, LabWork
-from apps.scheduling.models import Laboratory, Room
+from apps.scheduling.models import Laboratory, LabStand, Room
 
 
 class CatalogError(Exception):
@@ -45,13 +46,69 @@ def create_room(*, laboratory: Laboratory, data) -> Room:
     )
 
 
-def update_room(*, laboratory: Laboratory, room: Room, data) -> Room:
+def update_room(
+    *, laboratory: Laboratory, room: Room, data, actor=None
+) -> tuple[Room, list[dict]]:
+    """Сохранить аудиторию; вернуть её и слоты, где записано больше нового лимита.
+
+    Уменьшать вместимость можно всегда: уже созданные записи не отменяются,
+    но завлаб должен увидеть, какие слоты окажутся переполненными.
+    """
+    from apps.bookings.models import AuditLog
+
     if room.laboratory_id != laboratory.pk:
         raise CatalogError("Аудитория не принадлежит вашей лаборатории.")
+    capacity_before = room.capacity
     for field, value in _clean_room_payload(laboratory, data, room=room).items():
         setattr(room, field, value)
     room.save()
-    return room
+    if room.capacity != capacity_before:
+        AuditLog.objects.create(
+            actor=actor,
+            action="room.update",
+            entity_type="Room",
+            entity_id=room.pk,
+            payload={"capacity_before": capacity_before, "capacity_after": room.capacity},
+        )
+        return room, overloaded_sessions(room)
+    return room, []
+
+
+def overloaded_sessions(room: Room) -> list[dict]:
+    """Будущие слоты комнаты, где записано людей больше, чем мест в зале.
+
+    Зал общий для всех пересекающихся слотов, поэтому слот показывается
+    переполненным, если сумма записей по всем слотам, идущим в это время
+    в комнате, больше её вместимости.
+    """
+    from apps.bookings.models import Booking, BookingStatus
+    from apps.scheduling.models import LabSession, LabSessionStatus
+
+    sessions = list(
+        LabSession.objects.filter(room=room)
+        .exclude(status=LabSessionStatus.CANCELLED)
+        .select_related("lab_work")
+        .order_by("starts_at")
+    )
+    booked_rows = Booking.objects.filter(
+        current_status=BookingStatus.BOOKED, lab_session__room=room
+    ).values_list("lab_session__starts_at", "lab_session__ends_at")
+    result = []
+    for session in sessions:
+        total = sum(
+            1
+            for starts_at, ends_at in booked_rows
+            if starts_at < session.ends_at and ends_at > session.starts_at
+        )
+        if total > room.capacity:
+            result.append(
+                {
+                    "session": session,
+                    "booked": total,
+                    "capacity": room.capacity,
+                }
+            )
+    return result
 
 
 def _clean_lab_work_payload(laboratory: Laboratory, data):
@@ -78,6 +135,10 @@ def _clean_lab_work_payload(laboratory: Laboratory, data):
     ) if discipline_ids else []
     if not disciplines:
         raise CatalogError("Выберите хотя бы одну привязанную дисциплину.")
+    stand_ids = [item for item in data.getlist("stands") if item.strip().isdigit()]
+    stands = list(LabStand.objects.filter(pk__in=stand_ids, room__laboratory=laboratory))
+    if len(stands) != len(stand_ids):
+        raise CatalogError("Стенд не найден в аудиториях вашей лаборатории.")
     return {
         "number": number,
         "title": title,
@@ -86,14 +147,26 @@ def _clean_lab_work_payload(laboratory: Laboratory, data):
         "capacity": capacity,
         "is_published": data.get("is_published") == "on",
         "disciplines": disciplines,
+        "stands": stands,
     }
+
+
+def capacity_exceeds_stands(capacity: int, stands) -> list[LabStand]:
+    """Стенды, в которые не помещается вся группа.
+
+    Вместимость стенда справочная: на запись она не влияет, но завлабу
+    полезно знать, что установка меньше учебной группы.
+    """
+    return [stand for stand in stands if stand.capacity < capacity]
 
 
 def create_lab_work(*, laboratory: Laboratory, data) -> LabWork:
     payload = _clean_lab_work_payload(laboratory, data)
     disciplines = payload.pop("disciplines")
+    stands = payload.pop("stands")
     lab_work = LabWork.objects.create(**payload)
     lab_work.disciplines.set(disciplines)
+    lab_work.stands.set(stands)
     lab_work.laboratories.set([laboratory])
     lab_work.training_centers.set([laboratory.training_center])
     return lab_work
@@ -104,11 +177,20 @@ def update_lab_work(*, laboratory: Laboratory, lab_work: LabWork, data) -> LabWo
         raise CatalogError("Работа не найдена в вашей лаборатории.")
     payload = _clean_lab_work_payload(laboratory, data)
     disciplines = payload.pop("disciplines")
+    stands = payload.pop("stands")
     for field, value in payload.items():
         setattr(lab_work, field, value)
     lab_work.save()
     lab_work.disciplines.set(disciplines)
+    lab_work.stands.set(stands)
     return lab_work
+
+
+def archive_lab_work(lab_work: LabWork) -> None:
+    """Убрать ЛР из каталога, не трогая историю записей и слотов."""
+    lab_work.is_archived = True
+    lab_work.is_published = False
+    lab_work.save(update_fields=["is_archived", "is_published"])
 
 
 def lab_work_booking_count(lab_work: LabWork) -> int:

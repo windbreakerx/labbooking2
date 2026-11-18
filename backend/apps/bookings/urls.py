@@ -52,6 +52,11 @@ urlpatterns = [
     ),
     path("staff/reports/room-load/", reports.RoomLoadReportView.as_view(), name="staff-report-room-load"),
     path(
+        "staff/reports/overflow/",
+        reports.OverflowReportView.as_view(),
+        name="staff-report-overflow",
+    ),
+    path(
         "staff/reports/teacher-load/",
         reports.TeacherLoadReportView.as_view(),
         name="staff-report-teacher-load",

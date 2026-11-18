@@ -9,7 +9,7 @@
 from django.db import transaction
 
 from apps.academics.scope import student_can_access_lab_work
-from apps.bookings.models import AuditLog, BookingStatus, WaitlistEntry
+from apps.bookings.models import AuditLog, WaitlistEntry
 from apps.bookings.notifications import notify_waitlist_event
 from apps.bookings.services.errors import BookingError
 from apps.bookings.services.retry import retry_on_deadlock
@@ -43,7 +43,7 @@ def _join_waitlist_impl(student, session_id) -> WaitlistEntry:
         raise BookingError("Лабораторная работа недоступна для вашей группы.")
     if not can_student_book_session(student, session):
         raise BookingError("Запись на этот слот сейчас недоступна.")
-    if session.bookings.filter(current_status=BookingStatus.BOOKED).count() < session.capacity:
+    if session.available_seats > 0:
         raise BookingError("В слоте есть свободные места — запишитесь напрямую.")
     if WaitlistEntry.objects.filter(lab_session=session, student=student).exists():
         raise BookingError("Вы уже в очереди на этот слот.")
@@ -80,21 +80,25 @@ def promote_waitlist(session_id: int) -> None:
 def _promote_waitlist_with_retry(session_id: int) -> None:
     from apps.bookings.services.booking import BookingService
 
-    entry = (
-        WaitlistEntry.objects.select_related(*_NOTIFY_RELATED)
-        .filter(lab_session_id=session_id)
-        .order_by("position")
-        .first()
-    )
-    if entry is None:
-        return
-    try:
-        BookingService().create_booking(entry.student, session_id)
-    except BookingError:
-        notify_waitlist_event(entry, "dropped")
-        entry.delete()
-    else:
-        entry.delete()  # «Вы записаны» уже отправлено из create_booking
+    with transaction.atomic():
+        # Порядок блокировок как в BookingService: сначала слот, потом записи.
+        LabSession.objects.select_for_update(of=("self",)).filter(pk=session_id).first()
+        entry = (
+            WaitlistEntry.objects.select_for_update(of=("self",))
+            .select_related(*_NOTIFY_RELATED)
+            .filter(lab_session_id=session_id)
+            .order_by("position")
+            .first()
+        )
+        if entry is None:
+            return
+        try:
+            BookingService().create_booking(entry.student, session_id)
+        except BookingError:
+            notify_waitlist_event(entry, "dropped")
+            entry.delete()
+        else:
+            entry.delete()  # create_booking пишет событие «booked» в лог уведомлений
 
 
 def drop_session_waitlist(session) -> int:

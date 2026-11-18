@@ -14,12 +14,13 @@ from django.views import View
 
 from apps.academics.models import ALLOWED_LAB_DURATIONS, LabWorkBookingRelease
 from apps.bookings.services.booking import BookingService
-from apps.scheduling.models import LabSession, LabSessionStatus
+from apps.scheduling.models import LabSession, LabSessionStatus, LabStand
 from apps.scheduling.services.catalog_admin import (
     CatalogError,
+    archive_lab_work,
+    capacity_exceeds_stands,
     create_lab_work,
     create_room,
-    lab_work_booking_count,
     update_lab_work,
     update_room,
 )
@@ -60,10 +61,23 @@ class LabHeadRoomUpdateView(PortalLaboratoryMixin, View):
             return redirect("lab-head-rooms")
         was_blocked = room.is_blocked
         try:
-            room = update_room(laboratory=self.laboratory, room=room, data=request.POST)
+            room, overloaded = update_room(
+                laboratory=self.laboratory, room=room, data=request.POST, actor=request.user
+            )
         except CatalogError as exc:
             messages.error(request, str(exc))
             return redirect("lab-head-rooms")
+        if overloaded:
+            parts = [
+                f"{timezone.localtime(row['session'].starts_at):%d.%m %H:%M} "
+                f"«{row['session'].lab_work.title}» — {row['booked']}/{row['capacity']}"
+                for row in overloaded[:5]
+            ]
+            messages.warning(
+                request,
+                f"Вместимость аудитории №{room.number} уменьшена. "
+                f"Записей больше лимита: {'; '.join(parts)}.",
+            )
         if room.is_blocked and not was_blocked:
             cancelled = _block_room_sessions(request, room)
             messages.success(
@@ -95,18 +109,25 @@ class LabHeadLabWorksView(PortalLaboratoryMixin, View):
     def get(self, request):
         laboratory = self.laboratory
         lab_works = list(
-            laboratory.lab_works.prefetch_related("disciplines", "disciplines__semester").order_by(
-                "number", "title"
-            )
+            laboratory.lab_works.filter(is_archived=False)
+            .prefetch_related("disciplines", "disciplines__semester", "stands")
+            .order_by("number", "title")
         )
         edit_pk = request.GET.get("edit", "")
         edit_work = next((work for work in lab_works if str(work.pk) == edit_pk), None)
         disciplines = [
             binding.discipline
-            for binding in laboratory.discipline_bindings.select_related("discipline").order_by(
-                "discipline__title"
+            for binding in laboratory.discipline_bindings.filter(
+                discipline__is_archived=False
             )
+            .select_related("discipline")
+            .order_by("discipline__title")
         ]
+        stands = list(
+            LabStand.objects.filter(room__laboratory=laboratory)
+            .select_related("room")
+            .order_by("room__number", "name")
+        )
         release_rows = self._release_rows(lab_works)
         return render(
             request,
@@ -116,6 +137,8 @@ class LabHeadLabWorksView(PortalLaboratoryMixin, View):
                 "lab_works": lab_works,
                 "edit_work": edit_work,
                 "form_disciplines": disciplines,
+                "form_stands": stands,
+                "edit_stand_ids": {stand.pk for stand in edit_work.stands.all()} if edit_work else set(),
                 "duration_choices": DURATION_CHOICES,
                 "release_rows": release_rows,
             },
@@ -188,6 +211,7 @@ class LabHeadLabWorkCreateView(PortalLaboratoryMixin, View):
             messages.error(request, str(exc))
         else:
             messages.success(request, f"Работа «{work.title}» создана.")
+            _warn_small_stands(request, work)
         return redirect("lab-head-lab-works")
 
 
@@ -208,20 +232,36 @@ class LabHeadLabWorkUpdateView(PortalLaboratoryMixin, View):
             messages.success(request, f"Работа обновлена, длительность синхронизирована со слотами: {updated}.")
         else:
             messages.success(request, f"Работа «{lab_work.title}» обновлена.")
+        _warn_small_stands(request, lab_work)
         return redirect("lab-head-lab-works")
 
 
+def _warn_small_stands(request, lab_work) -> None:
+    small = capacity_exceeds_stands(lab_work.capacity, lab_work.stands.select_related("room"))
+    if not small:
+        return
+    names = ", ".join(f"{stand.room.number} — {stand.name} ({stand.capacity})" for stand in small)
+    messages.warning(
+        request,
+        f"Вместимость работы ({lab_work.capacity}) больше, чем у стенда: {names}. "
+        "Запись это не блокирует, но установка может не вместить группу.",
+    )
+
+
 class LabHeadLabWorkDeleteView(PortalLaboratoryMixin, View):
+    """Удаление без истории; если работа уже использовалась — уходит в архив."""
+
     def post(self, request, pk):
         lab_work = self.laboratory.lab_works.filter(pk=pk).first()
         if lab_work is None:
             messages.error(request, "Работа не найдена в вашей лаборатории.")
             return redirect("lab-head-lab-works")
-        bookings = lab_work_booking_count(lab_work)
-        if bookings:
-            messages.error(
+        if lab_work.sessions.exists():
+            archive_lab_work(lab_work)
+            messages.success(
                 request,
-                f"По работе есть записи студентов ({bookings}) — удаление запрещено.",
+                f"Работа «{lab_work.title}» перенесена в архив: по ней есть слоты. "
+                "История записей сохранена.",
             )
             return redirect("lab-head-lab-works")
         lab_work.delete()

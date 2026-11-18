@@ -1,0 +1,7 @@
+# Bandit: security linter configuration.
+# Tests are excluded because they intentionally use hardcoded credentials
+# and assertions as part of fixtures.
+exclude_dirs:
+  - tests
+skips:
+  - B101

@@ -11,6 +11,7 @@ from django.utils import timezone
 from apps.academics.models import Discipline
 from apps.bookings.models import (
     NO_SHOW_EXPLANATION_THRESHOLD,
+    AuditLog,
     BookingStatus,
     CancelSource,
     StudentLabAttendance,
@@ -38,6 +39,7 @@ from apps.scheduling.models import (
     Room,
     TrainingCenter,
 )
+from apps.scheduling.services.session_admin import SessionError, create_session
 
 from .conftest import (
     create_lab_work,
@@ -76,11 +78,10 @@ class TestBookingService:
             semester=semester,
             starts_at=starts2,
             ends_at=starts2 + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session2)
-        with pytest.raises(BookingError, match="активная запись"):
+        with pytest.raises(BookingError, match="лимит активных"):
             BookingService().create_booking(student, session2.pk)
 
     def test_manual_booking_skips_limits(self, student, session, staff, lab_work, room, semester):
@@ -94,15 +95,16 @@ class TestBookingService:
             semester=semester,
             starts_at=starts2,
             ends_at=starts2 + timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         booking = BookingService(actor=staff).create_booking(student, session2.pk, manual=True)
         assert booking.registration_type == "MANUAL"
 
-    def test_manual_booking_over_capacity_warns(self, student, session, staff, student_group):
-        session.capacity = 1
-        session.save(update_fields=["capacity"])
+    def test_manual_booking_over_capacity_warns(
+        self, student, session, staff, student_group, room
+    ):
+        room.capacity = 1
+        room.save(update_fields=["capacity"])
         BookingService(actor=student).create_booking(student, session.pk)
 
         other = make_student("overbook@stud.spmi.ru", student_group)
@@ -110,7 +112,9 @@ class TestBookingService:
         booking = service.create_booking(other, session.pk, manual=True)
 
         assert booking.registration_type == "MANUAL"
+        assert any("Аудитория" in warning for warning in service.booking_warnings)
         assert any("сверх лимита" in warning for warning in service.booking_warnings)
+        assert AuditLog.objects.filter(action="booking.overflow", entity_id=booking.pk).exists()
 
     def test_cancel_within_deadline(self, student, session):
         service = BookingService(actor=student)
@@ -141,7 +145,6 @@ class TestBookingService:
             semester=semester,
             starts_at=starts2,
             ends_at=starts2 + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session2, lab_work=lab_work)
@@ -168,7 +171,6 @@ class TestBookingService:
             semester=semester,
             starts_at=starts_b,
             ends_at=starts_b + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session_b, lab_work=lab_work_b)
@@ -197,7 +199,6 @@ class TestBookingService:
             semester=semester,
             starts_at=starts2,
             ends_at=starts2 + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session2, lab_work=lab_work)
@@ -233,7 +234,6 @@ class TestBookingService:
             semester=semester,
             starts_at=starts2,
             ends_at=starts2 + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session2, lab_work=lab_work)
@@ -331,7 +331,6 @@ class TestBookingService:
                 semester=semester,
                 starts_at=starts,
                 ends_at=starts + timezone.timedelta(minutes=90),
-                capacity=5,
                 status=LabSessionStatus.OPEN,
             )
             create_schedule_entry_for_session(sess, lab_work=lab_work)
@@ -355,12 +354,16 @@ class TestBookingService:
         other_room = Room.objects.create(
             training_center=room.training_center, number="202", capacity=5, laboratory=other_lab
         )
+        other_room.default_lab_staff = staff
+        other_room.save(update_fields=["default_lab_staff"])
         third_lab = Laboratory.objects.create(
             training_center=room.training_center, name="Третья лаборатория"
         )
         third_room = Room.objects.create(
             training_center=room.training_center, number="303", capacity=5, laboratory=third_lab
         )
+        third_room.default_lab_staff = staff
+        third_room.save(update_fields=["default_lab_staff"])
         service_student = BookingService(actor=student)
         service_staff = BookingService(actor=staff)
 
@@ -377,7 +380,6 @@ class TestBookingService:
             semester=semester,
             starts_at=starts2,
             ends_at=starts2 + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session2, lab_work=lab_work)
@@ -394,7 +396,6 @@ class TestBookingService:
             semester=semester,
             starts_at=starts3,
             ends_at=starts3 + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session3, lab_work=lab_work)
@@ -417,8 +418,8 @@ class TestBookingService:
         self, student, session, staff, student_group, django_capture_on_commit_callbacks
     ):
         other = make_student("waiter@stud.spmi.ru", student_group)
-        session.capacity = 1
-        session.save(update_fields=["capacity"])
+        session.lab_work.capacity = 1
+        session.lab_work.save(update_fields=["capacity"])
         booking = BookingService(actor=student).create_booking(student, session.pk)
         join_waitlist(other, session.pk)
         with django_capture_on_commit_callbacks(execute=True):
@@ -452,7 +453,6 @@ class TestBookingService:
             semester=semester,
             starts_at=session.starts_at,
             ends_at=session.ends_at,
-            capacity=2,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(parallel_session, lab_work=second_lab_work)
@@ -461,13 +461,11 @@ class TestBookingService:
         with pytest.raises(BookingError, match="Аудитория"):
             BookingService().create_booking(third_student, parallel_session.pk)
 
-    def test_same_lab_parallel_capacity_limit(
+    def test_same_lab_parallel_sessions_are_independent(
         self, student, session, room, semester, student_group
     ):
         room.capacity = 10
         room.save(update_fields=["capacity"])
-        session.capacity = 3
-        session.save(update_fields=["capacity"])
         session.lab_work.capacity = 3
         session.lab_work.save(update_fields=["capacity"])
 
@@ -481,7 +479,6 @@ class TestBookingService:
             semester=semester,
             starts_at=session.starts_at + timezone.timedelta(minutes=30),
             ends_at=session.starts_at + timezone.timedelta(minutes=75),
-            capacity=3,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(
@@ -492,9 +489,45 @@ class TestBookingService:
         BookingService().create_booking(second_student, session.pk)
         BookingService().create_booking(third_student, session.pk)
 
-        assert overlap.available_seats == 0
-        with pytest.raises(BookingError, match="Лимит мест для этой лабораторной работы"):
-            BookingService().create_booking(fourth_student, overlap.pk)
+        # Вместимость ЛР больше не общая на все параллельные пары:
+        # вторая пара в другой аудитории имеет свои места.
+        assert overlap.available_seats > 0
+        BookingService().create_booking(fourth_student, overlap.pk)
+        assert overlap.booked_count == 1
+
+    def test_same_lab_parallel_sessions_share_room_capacity(
+        self, student, session, room, semester, student_group
+    ):
+        room.capacity = 4
+        room.save(update_fields=["capacity"])
+        session.lab_work.capacity = 3
+        session.lab_work.save(update_fields=["capacity"])
+
+        second_student = make_student("room-same-lab-2@stud.spmi.ru", student_group)
+        third_student = make_student("room-same-lab-3@stud.spmi.ru", student_group)
+        fourth_student = make_student("room-same-lab-4@stud.spmi.ru", student_group)
+        fifth_student = make_student("room-same-lab-5@stud.spmi.ru", student_group)
+
+        overlap = LabSession.objects.create(
+            lab_work=session.lab_work,
+            room=room,
+            semester=semester,
+            starts_at=session.starts_at + timezone.timedelta(minutes=30),
+            ends_at=session.starts_at + timezone.timedelta(minutes=75),
+            status=LabSessionStatus.OPEN,
+        )
+        create_schedule_entry_for_session(
+            overlap, lab_work=session.lab_work, duration_minutes=45
+        )
+
+        BookingService().create_booking(student, session.pk)
+        BookingService().create_booking(second_student, session.pk)
+        BookingService().create_booking(third_student, session.pk)
+
+        assert overlap.available_seats == 1
+        BookingService().create_booking(fourth_student, overlap.pk)
+        with pytest.raises(BookingError, match="Аудитория"):
+            BookingService().create_booking(fifth_student, overlap.pk)
 
     def test_staff_status_change(self, student, session, staff):
         booking = BookingService(actor=student).create_booking(student, session.pk)
@@ -546,8 +579,8 @@ class TestBookingService:
         assert booking.pk
         assert attempts["count"] == 2
 
-    def test_shared_stand_blocks_parallel_booking(
-        self, student, session, room, semester, student_group
+    def test_shared_stand_blocks_parallel_session(
+        self, staff, session, room, semester, student_group
     ):
         stand = LabStand.objects.create(
             name="Общий стенд",
@@ -555,8 +588,7 @@ class TestBookingService:
             training_center=room.training_center,
             room=room,
         )
-        session.lab_work.primary_stand = stand
-        session.lab_work.save(update_fields=["primary_stand"])
+        session.lab_work.stands.add(stand)
 
         discipline_two = Discipline.objects.create(
             title="Вторая дисциплина", semester=semester, is_published=True
@@ -568,23 +600,23 @@ class TestBookingService:
             title="ЛР на том же стенде",
             duration_minutes=90,
             is_published=True,
-            primary_stand=stand,
         )
-        second_session = LabSession.objects.create(
-            lab_work=second_lab,
-            room=room,
-            semester=semester,
-            starts_at=session.starts_at,
-            ends_at=session.ends_at,
-            capacity=2,
-            status=LabSessionStatus.OPEN,
-        )
-        create_schedule_entry_for_session(second_session, lab_work=second_lab)
-        other_student = make_student("stand-conflict@stud.spmi.ru", student_group)
+        second_lab.stands.add(stand)
+        second_lab.laboratories.add(room.laboratory)
 
-        BookingService().create_booking(student, session.pk)
-        with pytest.raises(BookingError, match="Стенд уже занят"):
-            BookingService().create_booking(other_student, second_session.pk)
+        starts = timezone.localtime(session.starts_at)
+        with pytest.raises(SessionError, match="занят"):
+            create_session(
+                room.laboratory,
+                {
+                    "lab_work_id": second_lab.pk,
+                    "room_id": room.pk,
+                    "semester_id": semester.pk,
+                    "date": starts.date().isoformat(),
+                    "time": starts.strftime("%H:%M"),
+                },
+                actor=staff,
+            )
 
     def test_shared_stand_allows_multiple_students_on_same_lab_session(
         self, student, session, room, student_group
@@ -595,10 +627,11 @@ class TestBookingService:
             training_center=room.training_center,
             room=room,
         )
-        session.lab_work.primary_stand = stand
-        session.lab_work.save(update_fields=["primary_stand"])
-        session.capacity = 3
-        session.save(update_fields=["capacity"])
+        session.lab_work.stands.add(stand)
+        session.lab_work.capacity = 3
+        session.lab_work.save(update_fields=["capacity"])
+        room.capacity = 3
+        room.save(update_fields=["capacity"])
 
         second_student = make_student("stand-group@stud.spmi.ru", student_group)
         third_student = make_student("stand-group2@stud.spmi.ru", student_group)
@@ -616,10 +649,11 @@ class TestBookingService:
             training_center=room.training_center,
             room=room,
         )
-        session.lab_work.primary_stand = stand
-        session.lab_work.save(update_fields=["primary_stand"])
-        session.capacity = 3
-        session.save(update_fields=["capacity"])
+        session.lab_work.stands.add(stand)
+        session.lab_work.capacity = 3
+        session.lab_work.save(update_fields=["capacity"])
+        room.capacity = 3
+        room.save(update_fields=["capacity"])
 
         assert session.available_seats == 3
 
@@ -642,7 +676,6 @@ class TestBookingService:
             semester=semester,
             starts_at=overlap_start,
             ends_at=overlap_start + timezone.timedelta(minutes=60),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(
@@ -865,7 +898,6 @@ class TestSessionAvailability:
             semester=semester,
             starts_at=session.starts_at,
             ends_at=session.starts_at + timezone.timedelta(minutes=60),
-            capacity=2,
             status=LabSessionStatus.OPEN,
         )
         free_start = next_open_weekday_pair(days_ahead=5, hour=10, minute=35)
@@ -875,7 +907,6 @@ class TestSessionAvailability:
             semester=semester,
             starts_at=free_start,
             ends_at=free_start + timezone.timedelta(minutes=60),
-            capacity=2,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(overlap, lab_work=second_lab)

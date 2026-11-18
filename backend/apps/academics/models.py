@@ -102,6 +102,7 @@ class Discipline(models.Model):
     title = models.CharField("Название", max_length=256)
     description = models.TextField("Описание", blank=True)
     is_published = models.BooleanField("Опубликовано", default=True)
+    is_archived = models.BooleanField("В архиве", default=False)
     dekanat_id = models.CharField("ID в Деканате", max_length=64, blank=True)
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, related_name="disciplines", verbose_name="Кафедра")
     semester = models.ForeignKey(Semester, on_delete=models.CASCADE, related_name="disciplines", null=True, blank=True)
@@ -127,10 +128,17 @@ class LabWork(models.Model):
     capacity = models.PositiveIntegerField("Макс. мест", default=3)
     required_sessions = models.PositiveIntegerField("Требуется занятий", default=1)
     is_published = models.BooleanField("Опубликовано", default=True)
+    is_archived = models.BooleanField("В архиве", default=False)
     training_centers = models.ManyToManyField("scheduling.TrainingCenter", blank=True, related_name="lab_works", verbose_name="Учебные центры")
     laboratories = models.ManyToManyField("scheduling.Laboratory", blank=True, related_name="lab_works", verbose_name="Лаборатории")
     default_room = models.ForeignKey("scheduling.Room", on_delete=models.SET_NULL, null=True, blank=True, related_name="default_lab_works", verbose_name="Аудитория по умолчанию")
-    primary_stand = models.ForeignKey("scheduling.LabStand", on_delete=models.SET_NULL, null=True, blank=True, related_name="primary_for_lab_works", verbose_name="Основной стенд")
+    stands = models.ManyToManyField(
+        "scheduling.LabStand",
+        blank=True,
+        related_name="lab_works",
+        verbose_name="Стенды",
+        help_text="Одинаковые стенды: по одному в каждой аудитории, где читается работа.",
+    )
 
     class Meta:
         verbose_name = "Лабораторная работа"

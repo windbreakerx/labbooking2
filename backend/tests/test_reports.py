@@ -30,6 +30,7 @@ from tests.conftest import (
 )
 
 REPORTS_URL = "/staff/reports/"
+OVERFLOW_URL = "/staff/reports/overflow/"
 BOOKINGS_HEADER = [
     "Студент", "Email", "Группа", "Дисциплина", "ЛР", "Дата",
     "УЦ", "Ауд.", "Регистрация", "Кем записан", "Статус", "Кто отменил", "Была неявка",
@@ -61,7 +62,6 @@ def _foreign_lab(semester):
         semester=semester,
         starts_at=starts,
         ends_at=starts + timezone.timedelta(minutes=90),
-        capacity=2,
         status=LabSessionStatus.OPEN,
     )
     return room2, discipline2, session2
@@ -147,10 +147,14 @@ class TestStaffReports:
         response = staff_client.get(_download_url("bookings"), {"discipline": discipline2.pk})
         assert len(_rows(_sheet(response, "Записи"))) == 1
 
-    def test_attendance_report(self, staff_client, staff, student, session, booking):
-        _booking_with_status(staff, student, session, BookingStatus.VISITED)
+    def test_attendance_report(
+        self, staff_client, staff, student, student_group, session, booking
+    ):
+        booking.current_status = BookingStatus.VISITED
+        booking.save(update_fields=["current_status"])
+        other = make_student("attendance-noshow@stud.spmi.ru", student_group)
         _booking_with_status(
-            staff, student, session, BookingStatus.NO_SHOW, had_no_show=True
+            staff, other, session, BookingStatus.NO_SHOW, had_no_show=True
         )
         rows = _rows(_sheet(staff_client.get(_download_url("attendance")), "Посещаемость"))
         assert rows[0] == ["Студент", "Дисциплина", "ЛР", "Дата", "Статус", "Была неявка"]
@@ -158,16 +162,19 @@ class TestStaffReports:
         assert statuses == ["Неявка", "Посетил"]
         assert all(row[5] == ("Да" if row[4] == "Неявка" else "Нет") for row in rows[1:])
 
-    def test_discipline_summary_counters(self, staff_client, staff, student, session, booking):
-        _booking_with_status(staff, student, session, BookingStatus.VISITED)
-        _booking_with_status(staff, student, session, BookingStatus.REACCESS)
-        _booking_with_status(
-            staff, student, session, BookingStatus.CANCELLED, cancel_source=CancelSource.STUDENT
-        )
-        _booking_with_status(staff, student, session, BookingStatus.SLOT_CANCELLED)
-        _booking_with_status(
-            staff, student, session, BookingStatus.NO_SHOW, had_no_show=True
-        )
+    def test_discipline_summary_counters(
+        self, staff_client, staff, student, student_group, session, booking
+    ):
+        statuses = [
+            (BookingStatus.VISITED, {}),
+            (BookingStatus.REACCESS, {}),
+            (BookingStatus.CANCELLED, {"cancel_source": CancelSource.STUDENT}),
+            (BookingStatus.SLOT_CANCELLED, {}),
+            (BookingStatus.NO_SHOW, {"had_no_show": True}),
+        ]
+        for index, (status, extra) in enumerate(statuses):
+            other = make_student(f"summary-{index}@stud.spmi.ru", student_group)
+            _booking_with_status(staff, other, session, status, **extra)
         rows = _rows(_sheet(staff_client.get(_download_url("discipline_summary")), "Свод по дисциплине"))
         assert rows[0] == [
             "Дисциплина", "Записано", "Посетили", "Неявки", "Отмены",
@@ -186,9 +193,44 @@ class TestStaffReports:
         assert response.status_code == 200
         assert len(_rows(_sheet(response, "Записи"))) == 1
 
+    def test_overflow_report_view_and_xlsx(
+        self, staff_client, staff, student, student_group, session, room
+    ):
+        room.capacity = 1
+        room.save(update_fields=["capacity"])
+        second = make_student("overflow-2@stud.spmi.ru", student_group)
+        seed_manual_booking(actor=staff, student=student, session=session)
+        seed_manual_booking(actor=staff, student=second, session=session)
+
+        response = staff_client.get(OVERFLOW_URL)
+        assert response.status_code == 200
+        assert "ЛР 1" in response.content.decode()
+
+        xlsx = staff_client.get(OVERFLOW_URL + "?format=xlsx")
+        assert xlsx["Content-Type"].startswith(XLSX_CONTENT_TYPE)
+        rows = _rows(_sheet(xlsx, "Переполненные слоты"))
+        assert len(rows) == 2
+        assert rows[1][4] == "ЛР 1"
+        assert rows[1][5] == 2  # записано
+        assert rows[1][6] == 1  # лимит аудитории
+
     def test_student_denied(self, client, student):
         client.force_login(student)
         response = client.get(_download_url("bookings"), follow=True)
         assert "Доступ только для сотрудников лаборатории." in response.content.decode()
 
 
+
+
+@pytest.mark.django_db
+def test_invalid_report_filters_do_not_500(staff_client):
+    query = "?date_from=garbage&date_to=13-13-2026&discipline=abc&semester=xyz"
+    for url in (
+        _download_url("bookings"),
+        "/staff/reports/room-load/",
+        "/staff/reports/overflow/",
+        "/staff/reports/teacher-load/",
+        "/staff/reports/curriculum/",
+    ):
+        response = staff_client.get(url + query)
+        assert response.status_code == 200, url

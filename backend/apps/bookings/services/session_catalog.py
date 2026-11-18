@@ -11,7 +11,7 @@ from datetime import datetime
 
 from django.utils import timezone
 
-from apps.academics.models import LabWorkBookingRelease
+from apps.academics.models import LabWork, LabWorkBookingRelease
 from apps.academics.scope import resolve_student_group
 from apps.bookings.models import Booking, BookingStatus
 from apps.bookings.services.seat_capacity import seats_available
@@ -19,14 +19,18 @@ from apps.bookings.services.session_availability import (
     booking_date_window,
     booking_window_configs,
     is_before_restriction_deadline,
-    is_booking_release_open,
     is_day_open_for_booking,
     is_pair_time_for_booking,
-    is_session_allowed_for_student_group,
     is_session_in_manual_booking_window,
     manual_booking_max_date,
 )
-from apps.scheduling.models import Holiday, LabSession, LabSessionBookingMode, LabSessionStatus
+from apps.scheduling.models import (
+    Holiday,
+    LabSession,
+    LabSessionBookingMode,
+    LabSessionStatus,
+    LabStand,
+)
 from apps.users.models import User
 
 
@@ -71,6 +75,9 @@ def student_bookable_slots(
     configs = booking_window_configs({session.room.laboratory_id for session in sessions})
     counters = _seat_counters(sessions)
     busy_intervals = _student_busy_intervals(student)
+    open_releases = _open_release_keys(sessions, moment)
+    allowed_group_ids = _session_allowed_group_ids(sessions)
+    student_group = resolve_student_group(student)
     slots: list[SessionSlot] = []
     for session in sessions:
         config = configs[session.room.laboratory_id]
@@ -81,9 +88,10 @@ def student_bookable_slots(
             continue
         if not is_before_restriction_deadline(session.starts_at, moment, config=config):
             continue
-        if not is_booking_release_open(session.lab_work_id, session.semester_id, moment):
+        if (session.lab_work_id, session.semester_id) not in open_releases:
             continue
-        if not is_session_allowed_for_student_group(session, student):
+        session_allowed = allowed_group_ids.get(session.pk, set())
+        if session_allowed and (student_group is None or student_group.pk not in session_allowed):
             continue
         if _overlaps_any_interval(session, busy_intervals):
             continue
@@ -95,11 +103,14 @@ def student_bookable_slots(
     return slots
 
 
-def staff_manual_slots(lab_work_id: int, *, now: datetime | None = None) -> list[SessionSlot]:
+def staff_manual_slots(
+    lab_work_id: int, *, now: datetime | None = None, room_ids=None
+) -> list[SessionSlot]:
     """Слоты для ручной записи: с текущего момента до N рабочих недель.
 
     Фильтра по местам нет — лимиты ручной записи дают предупреждения,
-    а не запрет (BookingService._validate_manual_booking_rules).
+    а не запрет (BookingService._validate_manual_booking_rules). ``room_ids``
+    ограничивает выборку комнатами, в которые сотруднику разрешено писать.
     """
     moment = now or timezone.now()
     holiday_dates = set(Holiday.objects.values_list("date", flat=True))
@@ -115,6 +126,8 @@ def staff_manual_slots(lab_work_id: int, *, now: datetime | None = None) -> list
         .select_related("lab_work", "room", "room__training_center")
         .order_by("starts_at")
     )
+    if room_ids is not None:
+        qs = qs.filter(room_id__in=room_ids)
     sessions = list(qs)
     counters = _seat_counters(sessions)
     slots: list[SessionSlot] = []
@@ -130,18 +143,18 @@ def staff_manual_slots(lab_work_id: int, *, now: datetime | None = None) -> list
 
 
 def _seat_counters(sessions: list[LabSession]) -> dict[int, dict[str, int | bool]]:
-    """Счётчики мест всех слотов одним запросом по записям BOOKED.
+    """Счётчики мест всех слотов одним блоком запросов.
 
     Пересечения считаются в Python; семантика совпадает со скалярными
-    session_seat_counts: чужие слоты той же ЛР / той же аудитории,
-    первичный стенд, занятый другой ЛР.
+    session_seat_counts: записи в слот, чужие записи в аудитории,
+    занятость стенда этой ЛР.
     """
     if not sessions:
         return {}
     min_starts = min(session.starts_at for session in sessions)
     max_ends = max(session.ends_at for session in sessions)
     counters = {
-        session.pk: {"session_booked": 0, "lab_other": 0, "room_other": 0, "stand_blocked": False}
+        session.pk: {"session_booked": 0, "room_other": 0, "stand_blocked": False}
         for session in sessions
     }
     rows = Booking.objects.filter(
@@ -150,46 +163,82 @@ def _seat_counters(sessions: list[LabSession]) -> dict[int, dict[str, int | bool
         lab_session__ends_at__gt=min_starts,
     ).values(
         "lab_session_id",
-        "lab_session__lab_work_id",
         "lab_session__room_id",
         "lab_session__starts_at",
         "lab_session__ends_at",
-        "lab_session__lab_work__primary_stand_id",
     )
     for row in rows:
         for session in sessions:
-            _accumulate_seat_counters(session, counters[session.pk], row)
+            if row["lab_session_id"] == session.pk:
+                counters[session.pk]["session_booked"] += 1
+                continue
+            if (
+                row["lab_session__starts_at"] < session.ends_at
+                and row["lab_session__ends_at"] > session.starts_at
+                and row["lab_session__room_id"] == session.room_id
+            ):
+                counters[session.pk]["room_other"] += 1
+    _mark_stand_conflicts(sessions, counters, min_starts, max_ends)
     return counters
 
 
-def _accumulate_seat_counters(session: LabSession, counter: dict, row: dict) -> None:
-    if row["lab_session_id"] == session.pk:
-        counter["session_booked"] += 1
+def _mark_stand_conflicts(
+    sessions: list[LabSession],
+    counters: dict[int, dict[str, int | bool]],
+    min_starts,
+    max_ends,
+) -> None:
+    """Проставить stand_blocked: чужая ЛР на том же стенде или стенды в комнате кончились."""
+    lab_work_ids = {session.lab_work_id for session in sessions}
+    through = LabWork.stands.through
+    stand_rows = list(
+        through.objects.filter(labwork_id__in=lab_work_ids).values_list(
+            "labwork_id", "labstand_id"
+        )
+    )
+    if not stand_rows:
         return
-    if not (
-        row["lab_session__starts_at"] < session.ends_at
-        and row["lab_session__ends_at"] > session.starts_at
-    ):
-        return
-    if row["lab_session__lab_work_id"] == session.lab_work_id:
-        counter["lab_other"] += 1
-    if row["lab_session__room_id"] == session.room_id:
-        counter["room_other"] += 1
-    stand_id = session.lab_work.primary_stand_id
-    if (
-        stand_id
-        and row["lab_session__lab_work__primary_stand_id"] == stand_id
-        and row["lab_session__lab_work_id"] != session.lab_work_id
-    ):
-        counter["stand_blocked"] = True
+    stand_rooms = dict(
+        LabStand.objects.filter(pk__in={row[1] for row in stand_rows}).values_list("id", "room_id")
+    )
+    stands_by_lab: dict[int, set[int]] = {}
+    for lab_work_id, stand_id in stand_rows:
+        stands_by_lab.setdefault(lab_work_id, set()).add(stand_id)
+
+    overlapping = list(
+        LabSession.objects.filter(starts_at__lt=max_ends, ends_at__gt=min_starts)
+        .exclude(status=LabSessionStatus.CANCELLED)
+        .values("id", "lab_work_id", "room_id", "starts_at", "ends_at")
+    )
+    for session in sessions:
+        stands = stands_by_lab.get(session.lab_work_id, set())
+        if not stands:
+            continue
+        stands_in_room = sum(1 for stand_id in stands if stand_rooms.get(stand_id) == session.room_id)
+        if stands_in_room == 0:
+            counters[session.pk]["stand_blocked"] = True
+            continue
+        parallel = 0
+        for other in overlapping:
+            if other["id"] == session.pk or not (
+                other["starts_at"] < session.ends_at and other["ends_at"] > session.starts_at
+            ):
+                continue
+            if other["lab_work_id"] == session.lab_work_id:
+                if other["room_id"] == session.room_id:
+                    parallel += 1
+                continue
+            if stands & stands_by_lab.get(other["lab_work_id"], set()):
+                counters[session.pk]["stand_blocked"] = True
+                break
+        if parallel >= stands_in_room:
+            counters[session.pk]["stand_blocked"] = True
 
 
 def _session_available_seats(session: LabSession, counter: dict) -> int:
     return seats_available(
         session_capacity=session.capacity,
         session_booked=counter["session_booked"],
-        lab_work_capacity=session.lab_work.capacity,
-        lab_other_booked=counter["lab_other"],
         room_capacity=session.room.capacity,
         room_other_booked=counter["room_other"],
         stand_blocked=counter["stand_blocked"],
@@ -208,6 +257,34 @@ def _student_busy_intervals(student: User | None) -> list[tuple]:
 
 def _overlaps_any_interval(session: LabSession, intervals: list[tuple]) -> bool:
     return any(start < session.ends_at and end > session.starts_at for start, end in intervals)
+
+
+def _session_allowed_group_ids(sessions: list[LabSession]) -> dict[int, set[int]]:
+    """Разрешённые группы для каждой сессии одним запросом (пусто = все)."""
+    if not sessions:
+        return {}
+    allowed: dict[int, set[int]] = {session.pk: set() for session in sessions}
+    through = LabSession.allowed_student_groups.through
+    for session_id, group_id in through.objects.filter(
+        labsession_id__in=allowed.keys()
+    ).values_list("labsession_id", "studentgroup_id"):
+        allowed[session_id].add(group_id)
+    return allowed
+
+
+def _open_release_keys(sessions: list[LabSession], moment: datetime) -> set[tuple[int, int]]:
+    """Ключи (lab_work_id, semester_id) с открытой записью на момент ``moment``."""
+    if not sessions:
+        return set()
+    keys = {(session.lab_work_id, session.semester_id) for session in sessions}
+    return {
+        (row["lab_work_id"], row["semester_id"])
+        for row in LabWorkBookingRelease.objects.filter(
+            booking_opens_at__lte=moment,
+        )
+        .values("lab_work_id", "semester_id")
+        if (row["lab_work_id"], row["semester_id"]) in keys
+    }
 
 
 # --- Отображение состояния релиза и групповых слотов ----------------------------

@@ -66,7 +66,6 @@ def _foreign_lab(semester):
         semester=semester,
         starts_at=starts,
         ends_at=starts + timezone.timedelta(minutes=90),
-        capacity=2,
         status=LabSessionStatus.OPEN,
     )
     return room2, lab_work2, session2
@@ -105,6 +104,14 @@ class TestAccess:
         assert booking.current_status == BookingStatus.BOOKED
         assert "Недостаточно прав" in response.content.decode()
 
+    def test_staff_without_rooms_sees_hint(self, staff_client, room):
+        room.default_lab_staff = None
+        room.save(update_fields=["default_lab_staff"])
+
+        page = staff_client.get(BOOKINGS_URL).content.decode()
+        assert "не закреплена ни одна аудитория" in page
+        assert "Ручная запись" not in page
+
 
 @pytest.mark.django_db
 class TestBookingsTable:
@@ -114,6 +121,13 @@ class TestBookingsTable:
         assert student.email in page
         assert session.lab_work.title in page
         assert 'href="?sort=student' in page
+
+    def test_invalid_filters_do_not_500(self, staff_client):
+        response = staff_client.get(
+            BOOKINGS_URL,
+            {"date_from": "garbage", "date_to": "32.13.2026", "discipline": "abc"},
+        )
+        assert response.status_code == 200
 
     def test_hides_foreign_lab_booking(self, staff_client, staff, student, semester, session):
         room2, _lw2, session2 = _foreign_lab(semester)
@@ -282,7 +296,8 @@ class TestManualBooking:
             MANUAL_URL, {"student_id": third.pk, "session_id": session.pk}, follow=True
         )
         assert Booking.objects.filter(student=third, lab_session=session).exists()
-        assert "Слот заполнен" in response.content.decode()
+        assert "Аудитория" in response.content.decode()
+        assert "сверх лимита" in response.content.decode()
 
     def test_post_rejects_foreign_lab_work(self, staff_client, student, semester):
         _room2, lab_work2, session2 = _foreign_lab(semester)
@@ -301,3 +316,18 @@ class TestManualBooking:
             MANUAL_URL, {"student_id": student.pk, "session_id": ""}, follow=True
         )
         assert "Выберите слот" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_bookings_table_is_paginated(staff_client, staff, session, student_group):
+    for index in range(51):
+        student = make_student(f"page-{index}@stud.spmi.ru", student_group)
+        seed_manual_booking(actor=staff, student=student, session=session)
+
+    first = staff_client.get(BOOKINGS_URL)
+    assert first.status_code == 200
+    assert first.context["page_obj"].paginator.count == 51
+    assert len(first.context["rows"]) == 50
+
+    second = staff_client.get(BOOKINGS_URL, {"page": 2})
+    assert len(second.context["rows"]) == 1

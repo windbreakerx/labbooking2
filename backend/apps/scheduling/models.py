@@ -80,6 +80,9 @@ class Room(models.Model):
         verbose_name = "Аудитория"
         verbose_name_plural = "Аудитории"
         unique_together = [("training_center", "number")]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(capacity__gte=1), name="scheduling_room_capacity_positive"),
+        ]
 
     def __str__(self):
         if self.name:
@@ -100,13 +103,12 @@ class LabSessionStatus(models.TextChoices):
 
 
 class LabSession(models.Model):
-    lab_work = models.ForeignKey(LabWork, on_delete=models.CASCADE, related_name="sessions")
+    lab_work = models.ForeignKey(LabWork, on_delete=models.PROTECT, related_name="sessions")
     room = models.ForeignKey(Room, on_delete=models.PROTECT, related_name="sessions")
     semester = models.ForeignKey(Semester, on_delete=models.PROTECT, related_name="sessions")
     teacher = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="taught_sessions")
     starts_at = models.DateTimeField("Начало")
     ends_at = models.DateTimeField("Окончание")
-    capacity = models.PositiveIntegerField("Мест")
     status = models.CharField(max_length=16, choices=LabSessionStatus.choices, default=LabSessionStatus.OPEN)
     booking_mode = models.CharField(
         "Режим бронирования",
@@ -128,13 +130,6 @@ class LabSession(models.Model):
         related_name="occupied_lab_sessions",
         verbose_name="Группа-оккупант",
     )
-    used_stands = models.ManyToManyField(
-        "LabStand",
-        blank=True,
-        related_name="sessions",
-        verbose_name="Используемые стенды",
-    )
-
     class Meta:
         verbose_name = "Слот лабораторной"
         verbose_name_plural = "Слоты лабораторных"
@@ -159,6 +154,13 @@ class LabSession(models.Model):
         return f"{self.lab_work} — {self.starts_at:%d.%m.%Y %H:%M}"
 
     @property
+    def capacity(self) -> int:
+        """Мест на пару: для групповой брони — размер группы, иначе вместимость ЛР."""
+        if self.booking_mode == LabSessionBookingMode.GROUP and self.occupant_group_id:
+            return self.occupant_group.students.count()
+        return self.lab_work.capacity
+
+    @property
     def booked_count(self):
         from apps.bookings.models import BookingStatus
 
@@ -171,16 +173,30 @@ class LabSession(models.Model):
 
         return session_available_seats(self)
 
-    def is_stand_blocked_by_other_lab_work(self) -> bool:
-        stand_id = self.lab_work.primary_stand_id
-        if not stand_id:
+    def is_stand_blocked(self) -> bool:
+        """Занят ли стенд: чужая ЛР использует тот же стенд или в комнате кончились стенды этой ЛР."""
+        stand_ids = list(self.lab_work.stands.values_list("id", flat=True))
+        if not stand_ids:
             return False
-        from apps.bookings.models import Booking, BookingStatus
-
-        return Booking.objects.filter(
-            current_status=BookingStatus.BOOKED, lab_session__lab_work__primary_stand_id=stand_id,
-            lab_session__starts_at__lt=self.ends_at, lab_session__ends_at__gt=self.starts_at,
-        ).exclude(lab_session__lab_work_id=self.lab_work_id).exists()
+        overlapping = (
+            LabSession.objects.filter(
+                starts_at__lt=self.ends_at,
+                ends_at__gt=self.starts_at,
+            )
+            .exclude(pk=self.pk)
+            .exclude(status=LabSessionStatus.CANCELLED)
+        )
+        if (
+            overlapping.exclude(lab_work_id=self.lab_work_id)
+            .filter(lab_work__stands__id__in=stand_ids)
+            .exists()
+        ):
+            return True
+        stands_in_room = self.lab_work.stands.filter(room_id=self.room_id).count()
+        if stands_in_room == 0:
+            return True
+        parallel = overlapping.filter(lab_work_id=self.lab_work_id, room_id=self.room_id).count()
+        return parallel >= stands_in_room
 
 
 class Holiday(models.Model):
@@ -233,6 +249,9 @@ class LabStand(models.Model):
         verbose_name = "Лабораторный стенд"
         verbose_name_plural = "Лабораторные стенды"
         ordering = ["name"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(capacity__gte=1), name="scheduling_labstand_capacity_positive"),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.inventory_number})"

@@ -54,6 +54,10 @@ class TestSessionAdmin:
     def test_create_group_session_auto_book_students(
         self, lab_work, room, semester, staff, student_group
     ):
+        from tests.conftest import make_student
+
+        make_student("g1@stud.spmi.ru", student_group)
+        make_student("g2@stud.spmi.ru", student_group)
         starts = next_open_weekday_pair(days_ahead=3)
         session = create_session(
             room.laboratory,
@@ -83,11 +87,11 @@ class TestSessionAdmin:
         update_session(
             room.laboratory,
             session,
-            _session_payload(lab_work, room, semester, starts, capacity=5),
+            _session_payload(lab_work, room, semester, starts),
             actor=staff,
         )
         session.refresh_from_db()
-        assert session.capacity == 5
+        assert session.capacity == lab_work.capacity
         assert session.bookings.filter(current_status=BookingStatus.BOOKED).count() == 1
 
     def test_update_session_time_with_bookings_fails(self, lab_work, room, semester, staff, student):

@@ -7,6 +7,7 @@
 
 from django.db.models import Q
 
+from apps.bookings.params import parse_date, parse_id
 from apps.users.models import User, UserRole
 
 BOOKING_SORT_FIELDS: dict[str, tuple[list[str], str]] = {
@@ -49,13 +50,13 @@ def filter_staff_bookings(qs, params):
             Q(student__profile__student_group__name__icontains=group_q)
             | Q(student__profile__group_name__icontains=group_q)
         )
-    if discipline_id := params.get("discipline"):
+    if discipline_id := parse_id(params.get("discipline")):
         qs = qs.filter(discipline_id=discipline_id)
     if room_q := params.get("room"):
         qs = qs.filter(room__number__icontains=room_q)
-    if date_from := params.get("date_from"):
+    if date_from := parse_date(params.get("date_from")):
         qs = qs.filter(scheduled_at__date__gte=date_from)
-    if date_to := params.get("date_to"):
+    if date_to := parse_date(params.get("date_to")):
         qs = qs.filter(scheduled_at__date__lte=date_to)
     if student_q := params.get("student"):
         qs = qs.filter(_student_search_q(student_q, prefix="student__"))

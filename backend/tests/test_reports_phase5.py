@@ -24,7 +24,7 @@ def teacher_user(db):
 
     return User.objects.create_user(
         email="teacher@spmi.ru",
-        password="pass",
+        password="pass",  # nosec B106
         first_name="У",
         last_name="Читель",
         role=UserRole.TEACHER,
@@ -41,7 +41,6 @@ class TestPhase5Reports:
             semester=semester,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session)
@@ -53,7 +52,7 @@ class TestPhase5Reports:
         assert row["room_number"] == "101"
         assert row["sessions"] == 1
         assert row["bookings"] == 1
-        assert row["utilization"] == 20.0
+        assert row["utilization"] == 50.0
 
     def test_teacher_load_report(self, lab_work, room, semester, staff, student, teacher_user):
         starts = next_open_weekday_pair(days_ahead=3)
@@ -64,7 +63,6 @@ class TestPhase5Reports:
             teacher=teacher_user,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session)
@@ -79,10 +77,11 @@ class TestPhase5Reports:
         from apps.users.models import User
 
         other_teacher = User.objects.create_user(
-            email="other@spmi.ru", password="pass", role=UserRole.TEACHER
+            email="other@spmi.ru", password="pass", role=UserRole.TEACHER  # nosec B106
         )
-        starts = next_open_weekday_pair(days_ahead=3)
-        for t in (teacher_user, other_teacher):
+        starts1 = next_open_weekday_pair(days_ahead=3)
+        starts2 = next_open_weekday_pair(days_ahead=6)
+        for t, starts in ((teacher_user, starts1), (other_teacher, starts2)):
             session = LabSession.objects.create(
                 lab_work=lab_work,
                 room=room,
@@ -90,7 +89,6 @@ class TestPhase5Reports:
                 teacher=t,
                 starts_at=starts,
                 ends_at=starts + timezone.timedelta(minutes=90),
-                capacity=5,
                 status=LabSessionStatus.OPEN,
             )
             create_schedule_entry_for_session(session)
@@ -104,6 +102,7 @@ class TestPhase5Reports:
     ):
         lab_work.required_sessions = 2
         lab_work.save(update_fields=["required_sessions"])
+        discipline.laboratories.add(room.laboratory)
         GroupDisciplineLoad.objects.create(
             discipline=discipline, group=student_group, semester=semester, is_active=True
         )
@@ -115,12 +114,13 @@ class TestPhase5Reports:
             semester=semester,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session)
         booking = BookingService(actor=student).create_booking(student, session.pk)
-        BookingService(actor=student).change_status(booking, BookingStatus.VISITED)
+        BookingService(actor=staff).change_status(
+            booking, BookingStatus.VISITED, note="Посещено"
+        )
 
         rows = curriculum_rows(staff)
         assert len(rows) == 1
@@ -138,7 +138,6 @@ class TestPhase5Reports:
             semester=semester,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         create_schedule_entry_for_session(session)

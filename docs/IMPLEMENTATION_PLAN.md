@@ -1,6 +1,8 @@
 # План реализации редизайна LabBooking
 
 > Документ зафиксирован после обсуждения архитектуры. Базовый дизайн — `docs/DESIGN_SCHEDULING.md`.
+>
+> **Обновление 18.11.2026.** Вместимость слота больше не хранится: мест на пару = `LabWork.capacity` (для групповой брони — размер группы). Стенды задаются у ЛР набором (`LabWork.stands`), а не у слота. Актуальные решения и инварианты — `docs/PLAN_BOOKING_CORE_2026-11-18.md`; состояние работ — `docs/WORKLOG_BOOKING_CORE_2026-11-18.md`. Разделы ниже, где упоминаются `used_stands` и `LabSession.capacity`, считаются историческими.
 
 ---
 
@@ -22,8 +24,10 @@
 ### `LabWork` (`apps/academics`)
 
 ```python
-capacity = models.PositiveIntegerField("Макс. мест", default=3)
+capacity = models.PositiveIntegerField("Макс. мест", default=3)  # мест на одну пару
 required_sessions = models.PositiveIntegerField("Требуется занятий", default=1)
+stands = models.ManyToManyField("scheduling.LabStand", blank=True)  # одинаковые стенды ЛР
+is_archived = models.BooleanField(default=False)
 ```
 
 ### `LabStand` (`apps/scheduling`)
@@ -55,19 +59,16 @@ occupant_group = models.ForeignKey(
     StudentGroup, on_delete=models.PROTECT, null=True, blank=True
 )
 
-# Используемые стенды (могут быть пустыми)
-used_stands = models.ManyToManyField(LabStand, blank=True, related_name="sessions")
-
 starts_at = models.DateTimeField()
 ends_at = models.DateTimeField()
-capacity = models.PositiveIntegerField()
 status = models.CharField(choices=LabSessionStatus.choices, default=OPEN)
 ```
 
-**Default capacity:**
-- если `used_stands` пусто — `LabWork.capacity` (default 3);
-- если стенды выбраны — сумма `LabStand.capacity`;
-- вручную переопределяется завлабом.
+**Вместимость слота:**
+- в базе не хранится;
+- групповая бронь — `occupant_group.students.count()`;
+- обычная — `lab_work.capacity`;
+- аудитория ограничивает всегда, стенды проверяются по `LabWork.stands`.
 
 ### `Booking` (`apps/bookings`)
 
@@ -111,7 +112,7 @@ class Meta:
 
 | Правило | Решение |
 |---|---|
-| **Стенды** | M2M `used_stands`; capacity по умолчанию — сумма вместимостей стендов |
+| **Стенды** | Набор одинаковых стендов у ЛР (`LabWork.stands`); в комнате параллельных слотов одной ЛР не больше, чем её стендов здесь |
 | **Студент выбирает стенд** | Нет, записывается на слот |
 | **Конфликт стендов** | Проверка в сервисе + `select_for_update` на конфликтующие слоты |
 | **Групповой слот** | Занимает всю аудиторию; capacity = размер группы; auto-book всех студентов группы |
@@ -130,7 +131,7 @@ class Meta:
 - `booking_mode = GROUP`, `occupant_group` обязателен.
 - `capacity = occupant_group.students.count()`.
 - При сохранении создаются `Booking` для всех студентов группы с `registration_type=GROUP`.
-- Другие слоты в это время в этой аудитории создать нельзя.
+- Другие слоты в это время в этой аудитории ограничены её вместимостью, а не запрещены целиком.
 - Посещение проставляется: автоматически, преподавателем или лаборантом (для групповых — обычно преподаватель/авто).
 
 ### Многосессионные ЛР
@@ -252,9 +253,9 @@ class Meta:
 
 ## 5. Открытые технические нюансы
 
-- **Уникальность слотов со стендами.** С ManyToMany `used_stands` нельзя сделать простой `UniqueConstraint`. Дублирование защищаем на уровне сервиса + блокировки. Если в проде возникнут race condition — добавить `ExclusionConstraint` на through-модель.
-- **Capacity группового слота.** Если состав группы изменится после создания слота, capacity не пересчитывается автоматически. Если нужно — либо запретить редактирование группы, либо добавить синхронизацию броней.
-- **Capacity при изменении состава стендов.** Если у слота уже есть брони, изменение `used_stands` должно проверять `capacity >= booked_count`.
+- **Стенды ЛР и комнаты.** Стенд принадлежит комнате; при создании слота проверяется, что в комнате есть стенд ЛР, что чужая ЛР не заняла тот же стенд и что параллельных слотов этой ЛР в комнате не больше, чем её стендов здесь.
+- **Вместимость группового слота.** Если состав группы изменится после создания слота, `session.capacity` пересчитается сам: это свойство, а не столбец.
+- **Вместимость при изменении стендов.** Вместимость стенда справочная; на запись она не влияет. При сохранении ЛР показывается предупреждение, если мест в ЛР больше, чем вмещает стенд.
 
 ---
 

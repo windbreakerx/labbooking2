@@ -50,7 +50,8 @@
       <li><span class="badge badge--visited">Посетил</span> {{ kpi.visited }}</li>
       <li><span class="badge badge--booked">Записан</span> {{ kpi.booked }}</li>
       <li><span class="badge badge--warning">Неявка</span> {{ kpi.no_show }}</li>
-      <li><span class="badge badge--muted">Отмены</span> {{ kpi.cancelled }}</li>
+      <li><span class="badge badge--muted">Отмены записей</span> {{ kpi.cancelled }}</li>
+      <li><span class="badge badge--muted">Отменённые слоты</span> {{ kpi.slot_cancelled }}</li>
     </ul>
   </section>
   <section class="card">
@@ -89,7 +90,7 @@
     data: {
       labels: {{ room_labels|safe }},
       datasets: [{
-        label: 'Загрузка аудитории, %',
+        label: 'Заполняемость мест, %',
         data: {{ room_values|safe }},
         backgroundColor: 'rgba(54, 162, 235, 0.6)',
         borderColor: 'rgba(54, 162, 235, 1)',
@@ -117,14 +118,15 @@
   new Chart(document.getElementById('statusChart'), {
     type: 'doughnut',
     data: {
-      labels: ['Посетил', 'Записан', 'Неявка', 'Отмены'],
+      labels: ['Посетил', 'Записан', 'Неявка', 'Отмены записей', 'Отменённые слоты'],
       datasets: [{
-        data: [{{ kpi.visited }}, {{ kpi.booked }}, {{ kpi.no_show }}, {{ kpi.cancelled }}],
+        data: [{{ kpi.visited }}, {{ kpi.booked }}, {{ kpi.no_show }}, {{ kpi.cancelled }}, {{ kpi.slot_cancelled }}],
         backgroundColor: [
           'rgba(75, 192, 192, 0.7)',
           'rgba(54, 162, 235, 0.7)',
           'rgba(255, 159, 64, 0.7)',
           'rgba(201, 203, 207, 0.7)',
+          'rgba(153, 102, 255, 0.7)',
         ],
       }],
     },

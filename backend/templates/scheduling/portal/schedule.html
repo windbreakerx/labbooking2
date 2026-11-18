@@ -122,20 +122,10 @@
                           </select>
                         </label>
                       </div>
-                      <label>Мест
-                        <input type="number" name="capacity" min="1" value="{{ session.capacity }}">
-                      </label>
                       <label>Разрешённые группы
                         <select name="allowed_student_groups" multiple size="3">
                           {% for g in student_groups %}
                             <option value="{{ g.pk }}"{% if g.pk in session.allowed_group_ids %} selected{% endif %}>{{ g.name }}</option>
-                          {% endfor %}
-                        </select>
-                      </label>
-                      <label>Стенды
-                        <select name="used_stands" multiple size="3">
-                          {% for s in stands %}
-                            <option value="{{ s.pk }}"{% if s.pk in session.used_stand_ids %} selected{% endif %}>{{ s.room.number }} — {{ s.name }}</option>
                           {% endfor %}
                         </select>
                       </label>
@@ -196,15 +186,9 @@
           {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
         </select>
       </div>
-      <label for="new-cap">Мест</label>
-      <input type="number" name="capacity" id="new-cap" min="1">
       <label for="new-allowed">Разрешённые группы</label>
       <select name="allowed_student_groups" id="new-allowed" multiple size="3">
         {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
-      </select>
-      <label for="new-stands">Стенды</label>
-      <select name="used_stands" id="new-stands" multiple size="3">
-        {% for s in stands %}<option value="{{ s.pk }}">{{ s.room.number }} — {{ s.name }}</option>{% endfor %}
       </select>
       <div class="form-actions form-grid__full">
         <button class="button" type="submit">Создать слот</button>
@@ -255,15 +239,9 @@
           {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
         </select>
       </div>
-      <label for="series-cap">Мест</label>
-      <input type="number" name="capacity" id="series-cap" min="1">
       <label for="series-allowed">Разрешённые группы</label>
       <select name="allowed_student_groups" id="series-allowed" multiple size="3">
         {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
-      </select>
-      <label for="series-stands">Стенды</label>
-      <select name="used_stands" id="series-stands" multiple size="3">
-        {% for s in stands %}<option value="{{ s.pk }}">{{ s.room.number }} — {{ s.name }}</option>{% endfor %}
       </select>
       <div class="form-actions form-grid__full">
         <button class="button" type="submit">Создать серию</button>

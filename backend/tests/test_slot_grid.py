@@ -106,7 +106,6 @@ def test_duplicate_slot_is_rejected_by_unique_constraint(session):
             semester=session.semester,
             starts_at=session.starts_at,
             ends_at=session.ends_at + timedelta(minutes=30),
-            capacity=1,
             status=LabSessionStatus.CLOSED,
         )
 
@@ -121,7 +120,6 @@ def test_same_start_in_other_room_is_allowed(session):
         semester=session.semester,
         starts_at=session.starts_at,
         ends_at=session.ends_at,
-        capacity=1,
         status=LabSessionStatus.OPEN,
     )
     assert clone.pk is not None

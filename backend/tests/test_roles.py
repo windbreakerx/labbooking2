@@ -21,7 +21,7 @@ from apps.users.roles import (
 
 def _user(role, email="u@spmi.ru"):
     return User.objects.create_user(
-        email=email, password="pass", first_name="R", last_name="O", role=role
+        email=email, password="pass", first_name="R", last_name="O", role=role  # nosec B106
     )
 
 

@@ -62,8 +62,11 @@ class LabSessionAdmin(admin.ModelAdmin):
     list_filter = ("status", "booking_mode", "semester", "room__training_center")
     date_hierarchy = "starts_at"
     search_fields = ("lab_work__title",)
-    filter_horizontal = ("allowed_student_groups", "used_stands")
+    filter_horizontal = ("allowed_student_groups",)
     autocomplete_fields = ("occupant_group",)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Holiday)

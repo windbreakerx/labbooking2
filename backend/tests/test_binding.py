@@ -11,7 +11,7 @@ from apps.users.models import User, UserProfile, UserRole
 
 def _user(email, role, *, laboratory=None, training_center=None):
     user = User.objects.create_user(
-        email=email, password="pass", first_name="T", last_name="U", role=role, is_staff=True
+        email=email, password="pass", first_name="T", last_name="U", role=role, is_staff=True  # nosec B106
     )
     UserProfile.objects.create(user=user, laboratory=laboratory, training_center=training_center)
     return user

@@ -13,8 +13,14 @@ from apps.academics.scope import (
     student_support_training_centers_qs,
 )
 from apps.bookings.models import Booking, SupportTicket
-from apps.bookings.scope import staff_bookings_qs, staff_support_tickets_qs
-from apps.bookings.services import BookingService
+from apps.bookings.scope import (
+    staff_bookings_qs,
+    staff_can_modify_room,
+    staff_rooms_qs,
+    staff_sessions_qs,
+    staff_support_tickets_qs,
+)
+from apps.bookings.services import BookingError, BookingService
 from apps.scheduling.models import (
     LabDisciplineBinding,
     Laboratory,
@@ -34,7 +40,7 @@ def _bind_discipline(laboratory, discipline):
 
 def _user(email, role, *, laboratory=None, training_center=None, student_group=None, is_staff=True):
     user = User.objects.create_user(
-        email=email, password="pass", first_name="F", last_name="L", role=role, is_staff=is_staff
+        email=email, password="pass", first_name="F", last_name="L", role=role, is_staff=is_staff  # nosec B106
     )
     UserProfile.objects.create(
         user=user,
@@ -170,7 +176,6 @@ def own_session(own_lab_work, own_room, semester):
         semester=semester,
         starts_at=starts,
         ends_at=starts + timezone.timedelta(minutes=90),
-        capacity=5,
         status=LabSessionStatus.OPEN,
     )
 
@@ -184,13 +189,14 @@ def foreign_session(foreign_lab_work, foreign_room, semester):
         semester=semester,
         starts_at=starts,
         ends_at=starts + timezone.timedelta(minutes=90),
-        capacity=5,
         status=LabSessionStatus.OPEN,
     )
 
 
 @pytest.fixture
-def own_booking(staff_with_lab, student, own_session):
+def own_booking(staff_with_lab, student, own_session, own_room):
+    own_room.default_lab_staff = staff_with_lab
+    own_room.save(update_fields=["default_lab_staff"])
     return BookingService(actor=staff_with_lab).create_booking(
         student, own_session.pk, manual=True
     )
@@ -266,7 +272,6 @@ class TestStaffScopeQuerysets:
             semester=semester,
             starts_at=starts,
             ends_at=starts + timezone.timedelta(minutes=90),
-            capacity=5,
             status=LabSessionStatus.OPEN,
         )
         booking = seed_manual_booking(actor=staff_with_lab, student=student, session=session)
@@ -327,10 +332,127 @@ class TestStudentScopeQuerysets:
 
 @pytest.mark.django_db
 class TestBookingVisibilityIntegration:
-    def test_booking_scope_matches_session_room(self, staff_with_lab, student, own_session):
+    def test_booking_scope_matches_session_room(self, staff_with_lab, student, own_session, own_room):
+        own_room.default_lab_staff = staff_with_lab
+        own_room.save(update_fields=["default_lab_staff"])
         booking = BookingService(actor=staff_with_lab).create_booking(
             student, own_session.pk, manual=True
         )
         assert staff_bookings_qs(staff_with_lab).filter(pk=booking.pk).exists()
         assert Booking.objects.filter(pk=booking.pk).exists()
 
+
+
+@pytest.mark.django_db
+class TestStaffWriteScope:
+    def test_room_scope_by_role(
+        self, staff_with_lab, lab_head, own_room, foreign_room
+    ):
+        own_room.default_lab_staff = staff_with_lab
+        own_room.save(update_fields=["default_lab_staff"])
+
+        assert staff_rooms_qs(staff_with_lab).filter(pk=own_room.pk).exists()
+        assert not staff_rooms_qs(staff_with_lab).filter(pk=foreign_room.pk).exists()
+        assert staff_can_modify_room(staff_with_lab, own_room)
+        assert not staff_can_modify_room(staff_with_lab, foreign_room)
+
+        assert staff_can_modify_room(lab_head, own_room)
+        assert not staff_can_modify_room(lab_head, foreign_room)
+
+        teacher = _user("scope-teacher@spmi.ru", UserRole.TEACHER)
+        assert not staff_can_modify_room(teacher, own_room)
+
+    def test_staff_cannot_modify_foreign_room(
+        self, staff_with_lab, foreign_group, foreign_session
+    ):
+        foreign_student = _user(
+            "foreign-write@stud.spmi.ru", UserRole.STUDENT, student_group=foreign_group, is_staff=False
+        )
+        booking = seed_manual_booking(
+            actor=staff_with_lab, student=foreign_student, session=foreign_session
+        )
+
+        with pytest.raises(BookingError, match="Нет прав"):
+            BookingService(actor=staff_with_lab).change_status(
+                booking, "VISITED", note="Посещено"
+            )
+        with pytest.raises(BookingError, match="Нет прав"):
+            BookingService(actor=staff_with_lab).create_booking(
+                foreign_student, foreign_session.pk, manual=True
+            )
+
+    def test_teacher_sees_only_own_sessions_and_bookings(
+        self, own_lab_work, own_room, semester, student
+    ):
+        teacher_one = _user("scope-teacher-1@spmi.ru", UserRole.TEACHER)
+        teacher_two = _user("scope-teacher-2@spmi.ru", UserRole.TEACHER)
+        other_student = _user(
+            "scope-other-student@stud.spmi.ru", UserRole.STUDENT, is_staff=False
+        )
+        starts_one = next_open_weekday_pair(days_ahead=7)
+        starts_two = next_open_weekday_pair(days_ahead=8)
+        session_one = LabSession.objects.create(
+            lab_work=own_lab_work,
+            room=own_room,
+            semester=semester,
+            teacher=teacher_one,
+            starts_at=starts_one,
+            ends_at=starts_one + timezone.timedelta(minutes=90),
+            status=LabSessionStatus.OPEN,
+        )
+        session_two = LabSession.objects.create(
+            lab_work=own_lab_work,
+            room=own_room,
+            semester=semester,
+            teacher=teacher_two,
+            starts_at=starts_two,
+            ends_at=starts_two + timezone.timedelta(minutes=90),
+            status=LabSessionStatus.OPEN,
+        )
+        booking_one = seed_manual_booking(
+            actor=teacher_one, student=student, session=session_one
+        )
+        seed_manual_booking(actor=teacher_two, student=other_student, session=session_two)
+
+        assert set(staff_sessions_qs(teacher_one).values_list("pk", flat=True)) == {
+            session_one.pk
+        }
+        assert set(staff_bookings_qs(teacher_one).values_list("pk", flat=True)) == {
+            booking_one.pk
+        }
+
+    def test_teacher_export_contains_only_own_rows(
+        self, own_lab_work, own_room, semester, student
+    ):
+        from io import BytesIO
+
+        from openpyxl import load_workbook
+
+        from apps.bookings.reports import generate_report
+
+        teacher_one = _user("scope-export-1@spmi.ru", UserRole.TEACHER)
+        teacher_two = _user("scope-export-2@spmi.ru", UserRole.TEACHER)
+        other_student = _user(
+            "scope-export-student@stud.spmi.ru", UserRole.STUDENT, is_staff=False
+        )
+        starts_one = next_open_weekday_pair(days_ahead=7)
+        starts_two = next_open_weekday_pair(days_ahead=8)
+        for teacher, starts, who in (
+            (teacher_one, starts_one, student),
+            (teacher_two, starts_two, other_student),
+        ):
+            session = LabSession.objects.create(
+                lab_work=own_lab_work,
+                room=own_room,
+                semester=semester,
+                teacher=teacher,
+                starts_at=starts,
+                ends_at=starts + timezone.timedelta(minutes=90),
+                status=LabSessionStatus.OPEN,
+            )
+            seed_manual_booking(actor=teacher, student=who, session=session)
+
+        payload = generate_report("bookings", staff_user=teacher_one)
+        rows = list(load_workbook(BytesIO(payload))["Записи"].iter_rows(values_only=True))
+        assert len(rows) == 2
+        assert rows[1][1] == student.email
