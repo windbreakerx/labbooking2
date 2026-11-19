@@ -8,7 +8,11 @@
 
 from django.db.models import Q
 
-from apps.academics.scope import resolve_staff_laboratory, resolve_staff_training_center
+from apps.academics.scope import (
+    resolve_staff_laboratory,
+    resolve_staff_training_center,
+    teacher_department_id,
+)
 from apps.bookings.models import Booking, SupportTicket
 from apps.scheduling.models import LabSession, Room
 from apps.users.models import UserRole
@@ -59,7 +63,13 @@ def staff_bookings_qs(user):
     if user.role == UserRole.SYS_ADMIN:
         return Booking.objects.select_related(*_BOOKING_RELATED)
     if user.role == UserRole.TEACHER:
-        return Booking.objects.filter(lab_session__teacher=user).select_related(*_BOOKING_RELATED)
+        department_id = teacher_department_id(user)
+        filters = Q(lab_session__teacher=user)
+        if department_id:
+            filters |= Q(
+                lab_session__lab_work__disciplines__department_id=department_id
+            )
+        return Booking.objects.filter(filters).distinct().select_related(*_BOOKING_RELATED)
     lab = resolve_staff_laboratory(user)
     if not lab:
         return Booking.objects.none()
@@ -100,7 +110,11 @@ def staff_sessions_qs(user, date_from=None, date_to=None):
     if user.role == UserRole.SYS_ADMIN:
         qs = LabSession.objects.all()
     elif user.role == UserRole.TEACHER:
-        qs = LabSession.objects.filter(teacher=user)
+        department_id = teacher_department_id(user)
+        filters = Q(teacher=user)
+        if department_id:
+            filters |= Q(lab_work__disciplines__department_id=department_id)
+        qs = LabSession.objects.filter(filters).distinct()
     else:
         lab = resolve_staff_laboratory(user)
         if not lab:

@@ -114,12 +114,11 @@ class TeacherLoadReportView(StaffRequiredMixin, View):
             return response
         teachers_qs = []
         if request.user.role != UserRole.TEACHER:
-            # Список преподавателей в зоне доступа — через people лаборатории
-            from apps.academics.scope import laboratory_people_qs, resolve_staff_laboratory
+            from apps.academics.scope import laboratory_teacher_users_qs, resolve_staff_laboratory
 
             lab = resolve_staff_laboratory(request.user)
             if lab is not None:
-                teachers_qs = laboratory_people_qs(lab).filter(role=UserRole.TEACHER)
+                teachers_qs = laboratory_teacher_users_qs(lab)
         return render(
             request,
             "bookings/staff/report_teacher_load.html",

@@ -73,6 +73,7 @@
             </td>
             <td class="cluster">
               <a class="button button--secondary button--sm" href="?edit={{ work.pk }}">Изменить</a>
+              <a class="button button--secondary button--sm" href="?methodics={{ work.pk }}">Методички{% if work.methodics_files.all %} ({{ work.methodics_files.all|length }}){% endif %}</a>
               <form method="post" action="{% url 'lab-head-lab-work-delete' work.pk %}"
                     onsubmit="return confirm('Удалить работу «{{ work.title|escapejs }}»? Если по ней есть слоты, она уйдёт в архив.');">
                 {% csrf_token %}
@@ -89,6 +90,53 @@
     <strong>Работ нет</strong>
     Создайте работу и привяжите её к дисциплине — она появится в редакторе расписания.
   </div>
+{% endif %}
+
+{% if methodics_work %}
+<section class="card" id="methodics">
+  <div class="card__header">
+    <h2 class="card__title">Методички: {{ methodics_work.title }}</h2>
+    <a class="button button--secondary button--sm" href="{% url 'lab-head-lab-works' %}">Закрыть</a>
+  </div>
+  <form method="post" enctype="multipart/form-data"
+        action="{% url 'lab-head-methodic-upload' methodics_work.pk %}" class="form-grid">
+    {% csrf_token %}
+    <label for="mf-file">PDF-файл</label>
+    <input type="file" name="file" id="mf-file" accept="application/pdf,.pdf" required>
+    <label for="mf-title">Название (необязательно)</label>
+    <input type="text" name="title" id="mf-title" maxlength="256" placeholder="{{ methodics_work.title }}">
+    <div class="form-actions">
+      <button class="button" type="submit">Загрузить</button>
+    </div>
+  </form>
+  <p class="field-hint">PDF до 10 МБ. Файл доступен только авторизованным пользователям: студенты видят его на странице записи.</p>
+
+  {% if methodics_work.methodics_files.all %}
+    <ul class="methodics-list">
+      {% for methodic in methodics_work.methodics_files.all %}
+        <li>
+          <strong>{{ methodic.display_name }}</strong>
+          <span class="muted">
+            — {{ methodic.uploaded_at|date:"d.m.Y H:i" }}
+            {% if methodic.uploaded_by %}, {{ methodic.uploaded_by }}{% endif %}
+          </span>
+          <span class="cluster">
+            <a class="button button--secondary button--sm" href="{% url 'methodic-file' methodic.pk %}" target="_blank" rel="noopener">Просмотреть</a>
+            <a class="button button--secondary button--sm" href="{% url 'methodic-file' methodic.pk %}?download=1">Скачать</a>
+            <form method="post"
+                  action="{% url 'lab-head-methodic-delete' methodics_work.pk methodic.pk %}"
+                  onsubmit="return confirm('Удалить методичку «{{ methodic.display_name|escapejs }}»?');">
+              {% csrf_token %}
+              <button class="button button--danger button--sm" type="submit">Удалить</button>
+            </form>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Методичек пока нет.</p>
+  {% endif %}
+</section>
 {% endif %}
 
 <section class="card">

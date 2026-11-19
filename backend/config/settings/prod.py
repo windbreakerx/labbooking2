@@ -2,10 +2,13 @@ from .base import *  # noqa: F403
 
 DEBUG = False
 
+# Методички отдаёт nginx из internal-локации; Django только проверяет права.
+USE_X_ACCEL_REDIRECT = env.bool("USE_X_ACCEL_REDIRECT", default=True)  # noqa: F405
+
 # No insecure default in production — misconfigured deploy must fail at startup.
 SECRET_KEY = env("SECRET_KEY")  # noqa: F405
 
-SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=False)  # noqa: F405
+SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=True)  # noqa: F405
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 _default_csrf_origins = [

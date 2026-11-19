@@ -11,9 +11,18 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View
 
-from apps.academics.models import Semester, StudentGroup
-from apps.academics.scope import laboratory_people_qs
-from apps.scheduling.models import LabSession, LabSessionBookingMode, LabSessionStatus
+from apps.academics.models import Semester
+from apps.academics.scope import (
+    laboratory_people_qs,
+    laboratory_study_groups_qs,
+    laboratory_teacher_users_qs,
+)
+from apps.scheduling.models import (
+    LabSession,
+    LabSessionBookingMode,
+    LabSessionGroupPart,
+    LabSessionStatus,
+)
 from apps.scheduling.services.session_admin import (
     SessionError,
     cancel_session,
@@ -74,6 +83,18 @@ def _default_semester() -> Semester | None:
     return None
 
 
+def _warn_group_overflow(request, session) -> None:
+    if (
+        session.booking_mode == LabSessionBookingMode.GROUP
+        and session.capacity > session.room.capacity
+    ):
+        messages.warning(
+            request,
+            f"Группа ({session.capacity}) больше вместимости аудитории "
+            f"({session.room.capacity}). Записи созданы, факт записан в аудит.",
+        )
+
+
 def _session_grid(sessions: list[LabSession]):
     """Раскладывает слоты по сетке [пара][день недели]."""
     grid = {
@@ -103,10 +124,21 @@ def _form_context(laboratory, room, semester) -> dict:
     lab_works = list(laboratory.lab_works.filter(is_published=True).order_by("number", "title"))
     rooms = list(laboratory.rooms.order_by("number"))
     semesters = list(Semester.objects.order_by("-start_date"))
-    teachers = list(
-        laboratory_people_qs(laboratory).filter(role__in=[UserRole.TEACHER, UserRole.LAB_HEAD])
+    teacher_map = {
+        user.pk: user
+        for user in [
+            *laboratory_teacher_users_qs(laboratory),
+            *laboratory_people_qs(laboratory).filter(
+                role__in=[UserRole.LAB_ADMIN, UserRole.LAB_HEAD]
+            ),
+        ]
+    }
+    teachers = sorted(
+        teacher_map.values(), key=lambda user: (user.last_name, user.first_name)
     )
-    groups = list(StudentGroup.objects.order_by("name"))
+    groups = list(
+        laboratory_study_groups_qs(laboratory, semester.pk if semester else None)
+    )
     return {
         "lab_works": lab_works,
         "rooms": rooms,
@@ -114,6 +146,7 @@ def _form_context(laboratory, room, semester) -> dict:
         "teachers": teachers,
         "student_groups": groups,
         "booking_modes": LabSessionBookingMode.choices,
+        "group_parts": LabSessionGroupPart.choices,
         "weekday_labels": WEEKDAY_LABELS,
         "selected_room": room,
         "selected_semester": semester,
@@ -196,11 +229,12 @@ class LabHeadScheduleView(PortalLaboratoryMixin, View):
             messages.error(request, "Выберите аудиторию и семестр.")
             return redirect("lab-head-schedule")
         try:
-            create_session(self.laboratory, request.POST, actor=request.user)
+            session = create_session(self.laboratory, request.POST, actor=request.user)
         except SessionError as exc:
             messages.error(request, str(exc))
         else:
             messages.success(request, "Слот создан.")
+            _warn_group_overflow(request, session)
         return self._redirect_back(request, room, semester)
 
     def _handle_update(self, request):
@@ -211,11 +245,12 @@ class LabHeadScheduleView(PortalLaboratoryMixin, View):
             messages.error(request, "Слот не найден.")
             return redirect("lab-head-schedule")
         try:
-            update_session(self.laboratory, session, request.POST, actor=request.user)
+            session = update_session(self.laboratory, session, request.POST, actor=request.user)
         except SessionError as exc:
             messages.error(request, str(exc))
         else:
             messages.success(request, "Слот обновлён.")
+            _warn_group_overflow(request, session)
         return self._redirect_back(request, room, semester)
 
     def _handle_delete(self, request):
@@ -254,6 +289,12 @@ class LabHeadScheduleView(PortalLaboratoryMixin, View):
                 f"(пропущено праздников: {result['skipped_holidays']}, "
                 f"дублей: {result['skipped_duplicates']}).",
             )
+            if result.get("overflows"):
+                messages.warning(
+                    request,
+                    f"В {result['overflows']} слотах группа больше вместимости аудитории — "
+                    "записи созданы, факт записан в аудит.",
+                )
         return self._redirect_back(request, room, semester)
 
     def _handle_copy_day(self, request):

@@ -309,8 +309,10 @@ class Command(BaseCommand):
         role = self._clean(row, "role", UserRole.LAB_ADMIN)
         if role not in STAFF_ROLES:
             role = UserRole.LAB_ADMIN
+        # is_staff = доступ в Django-админку. По умолчанию лабораторным ролям
+        # он не выдаётся; CSV может попросить его явно (is_staff=true).
         user, created = self._upsert_user(
-            row, role=role, is_staff=self._as_bool(row.get("is_staff"), default=True)
+            row, role=role, is_staff=self._as_bool(row.get("is_staff"), default=False)
         )
         if user is None:
             return 0, 0

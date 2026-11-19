@@ -21,7 +21,11 @@ htmlcov/
 db.sqlite3
 media/
 staticfiles/
+data/
 backups/
+.agents/
+.cursor/skills/
+.opencode/skills/
 *.sql
 .DS_Store
 .idea/

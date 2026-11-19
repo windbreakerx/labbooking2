@@ -43,3 +43,10 @@ docker compose up --build
 ```
 
 Поднимает `db` (PostgreSQL), `redis`, `web` (gunicorn), `nginx`, `scheduler` (django-q2 воркер).
+
+Бэкапы и восстановление — `docs/BACKUP.md` (скрипты в `deploy/`).
+Методички и права на них — `docs/METHODICS.md`.
+
+Прод: `SECURE_SSL_REDIRECT=1` включён по умолчанию в `config.settings.prod`.
+Для HTTP-стенда без TLS задайте `SECURE_SSL_REDIRECT=0` явно и не открывайте
+порт 80 наружу.

@@ -121,6 +121,13 @@
                             {% endfor %}
                           </select>
                         </label>
+                        <label>Часть группы
+                          <select name="group_part">
+                            {% for value, label in group_parts %}
+                              <option value="{{ value }}"{% if value == session.group_part %} selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                          </select>
+                        </label>
                       </div>
                       <label>Разрешённые группы
                         <select name="allowed_student_groups" multiple size="3">
@@ -185,6 +192,10 @@
           <option value="">—</option>
           {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
         </select>
+        <label for="new-part">Часть группы</label>
+        <select name="group_part" id="new-part">
+          {% for value, label in group_parts %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
       </div>
       <label for="new-allowed">Разрешённые группы</label>
       <select name="allowed_student_groups" id="new-allowed" multiple size="3">
@@ -237,6 +248,10 @@
         <select name="occupant_group" id="series-group">
           <option value="">—</option>
           {% for g in student_groups %}<option value="{{ g.pk }}">{{ g.name }}</option>{% endfor %}
+        </select>
+        <label for="series-part">Часть группы</label>
+        <select name="group_part" id="series-part">
+          {% for value, label in group_parts %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
         </select>
       </div>
       <label for="series-allowed">Разрешённые группы</label>

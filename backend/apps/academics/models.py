@@ -1,5 +1,9 @@
 from django.core.validators import FileExtensionValidator
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+from apps.academics.validators import validate_pdf_file
 
 ALLOWED_LAB_DURATIONS = (30, 45, 60, 90)
 ALLOWED_LAB_DURATIONS_CHOICES = tuple((value, f"{value} мин") for value in ALLOWED_LAB_DURATIONS)
@@ -46,6 +50,23 @@ class StudentGroup(models.Model):
         verbose_name = "Учебная группа"
         verbose_name_plural = "Учебные группы"
         ordering = ["name"]
+
+    def student_ids_for_part(self, part: str = "ALL") -> list[int]:
+        """Стабильный список студентов группы для полной/половинной брони.
+
+        Порядок — по фамилии, имени, pk. ``FIRST``/``SECOND`` делят список
+        примерно пополам; при нечётном составе первая половина больше на одного.
+        """
+        ids = list(
+            self.students.filter(user__role="STUDENT", user__is_active=True)
+            .order_by("user__last_name", "user__first_name", "user__pk")
+            .values_list("user_id", flat=True)
+        )
+        if part == "FIRST":
+            return ids[: (len(ids) + 1) // 2]
+        if part == "SECOND":
+            return ids[(len(ids) + 1) // 2 :]
+        return ids
 
     def __str__(self):
         return self.name
@@ -199,8 +220,20 @@ class LabWorkBookingRelease(models.Model):
 
 class LabWorkMethodics(models.Model):
     lab_work = models.ForeignKey(LabWork, on_delete=models.CASCADE, related_name="methodics_files", verbose_name="Лабораторная работа")
-    file = models.FileField("PDF", upload_to="methodics/", validators=[FileExtensionValidator(allowed_extensions=["pdf"])])
+    file = models.FileField(
+        "PDF",
+        upload_to="methodics/",
+        validators=[FileExtensionValidator(allowed_extensions=["pdf"]), validate_pdf_file],
+    )
     title = models.CharField("Название", max_length=256, blank=True)
+    uploaded_by = models.ForeignKey(
+        "users.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploaded_methodics",
+        verbose_name="Загрузил",
+    )
     uploaded_at = models.DateTimeField("Загружено", auto_now_add=True)
 
     class Meta:
@@ -214,3 +247,10 @@ class LabWorkMethodics(models.Model):
     @property
     def display_name(self) -> str:
         return self.title or self.file.name.rsplit("/", 1)[-1]
+
+
+@receiver(post_delete, sender=LabWorkMethodics)
+def _delete_methodic_file(sender, instance, **kwargs):
+    """Удалять файл вместе с записью: и при явном удалении, и при каскаде ЛР."""
+    if instance.file:
+        instance.file.delete(save=False)

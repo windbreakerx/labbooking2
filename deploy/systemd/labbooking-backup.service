@@ -1,0 +1,16 @@
+[Unit]
+Description=LabBooking: резервное копирование PostgreSQL и media
+Documentation=file:/srv/labbooking2/docs/BACKUP.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Docker socket доступен только root или пользователю из группы docker.
+# Если хотите отдельного пользователя — добавьте его в группу docker.
+User=root
+Environment=BACKUP_CONFIG=/etc/labbooking/backup.env
+ExecStart=/bin/bash /srv/labbooking2/deploy/backup.sh --auto
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min

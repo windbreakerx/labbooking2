@@ -75,7 +75,8 @@ class Command(BaseCommand):
                     "first_name": first_name,
                     "last_name": last_name,
                     "role": role,
-                    "is_staff": True,
+                    # Доступ в Django-админку — только у сисадмина.
+                    "is_staff": False,
                 },
             )
             if created:

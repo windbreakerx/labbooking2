@@ -1,0 +1,14 @@
+[Unit]
+Description=LabBooking: проверка восстановления из последнего дампа
+Documentation=file:/srv/labbooking2/docs/BACKUP.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Environment=BACKUP_CONFIG=/etc/labbooking/backup.env
+ExecStart=/bin/bash /srv/labbooking2/deploy/restore-check.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min

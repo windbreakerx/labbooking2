@@ -131,6 +131,85 @@ def student_can_access_lab_work(user: User, lab_work_id: int) -> bool:
     return student_lab_works_qs(user).filter(pk=lab_work_id).exists()
 
 
+def group_discipline_ids(group: StudentGroup, semester_id: int | None = None) -> set[int]:
+    """Дисциплины учебного плана группы; fallback — M2M, если нагрузки ещё нет."""
+    loads = GroupDisciplineLoad.objects.filter(group=group, is_active=True)
+    if semester_id is not None:
+        loads = loads.filter(semester_id=semester_id)
+    else:
+        loads = loads.filter(semester__is_active=True)
+    ids = set(loads.values_list("discipline_id", flat=True))
+    if not ids:
+        ids = set(group.disciplines.values_list("pk", flat=True))
+    return ids
+
+
+def group_can_take_lab_work(
+    group: StudentGroup, lab_work: LabWork, semester_id: int | None = None
+) -> bool:
+    """Группа изучает ЛР, если она есть в её плане или хотя бы её дисциплина."""
+    if group.lab_works.filter(pk=lab_work.pk).exists():
+        return True
+    discipline_ids = group_discipline_ids(group, semester_id)
+    return bool(discipline_ids) and lab_work.disciplines.filter(
+        pk__in=discipline_ids
+    ).exists()
+
+
+def laboratory_study_groups_qs(laboratory, semester_id: int | None = None) -> QuerySet[StudentGroup]:
+    """Группы, чей учебный план пересекается с ЛР лаборатории."""
+    lab_work_ids = laboratory.lab_works.values_list("pk", flat=True)
+    discipline_ids = Discipline.objects.filter(
+        lab_works__in=lab_work_ids
+    ).values_list("pk", flat=True)
+    load_filter = Q(
+        discipline_loads__discipline_id__in=discipline_ids,
+        discipline_loads__is_active=True,
+    )
+    if semester_id is not None:
+        load_filter &= Q(discipline_loads__semester_id=semester_id)
+    else:
+        load_filter &= Q(discipline_loads__semester__is_active=True)
+    return (
+        StudentGroup.objects.filter(
+            load_filter
+            | Q(disciplines__in=discipline_ids)
+            | Q(lab_works__in=lab_work_ids)
+        )
+        .distinct()
+        .order_by("name")
+    )
+
+
+def teacher_department_id(user: User) -> int | None:
+    profile = _safe_profile(user)
+    return profile.department_id if profile else None
+
+
+def teacher_lab_works_qs(user: User) -> QuerySet[LabWork]:
+    """Опубликованные ЛР активного семестра по кафедре преподавателя."""
+    department_id = teacher_department_id(user)
+    if not department_id:
+        return LabWork.objects.none()
+    return LabWork.objects.filter(
+        is_published=True,
+        is_archived=False,
+        disciplines__semester__is_active=True,
+        disciplines__department_id=department_id,
+    ).distinct()
+
+
+def laboratory_teacher_users_qs(laboratory) -> QuerySet[User]:
+    """Преподаватели кафедр, к которым относятся дисциплины лаборатории."""
+    department_ids = Discipline.objects.filter(
+        lab_works__laboratories=laboratory
+    ).values_list("department_id", flat=True)
+    return User.objects.filter(
+        role=UserRole.TEACHER,
+        profile__department_id__in=department_ids,
+    ).select_related("profile")
+
+
 def resolve_staff_laboratory(user: User) -> Laboratory | None:
     """Лаборатория сотрудника: из профиля, иначе первая лаборатория его УЦ."""
     profile = _safe_profile(user)
@@ -214,6 +293,11 @@ def lab_head_disciplines_qs(user: User) -> QuerySet[Discipline]:
 
 
 def staff_lab_works_qs(user: User, discipline_id: int | None = None) -> QuerySet[LabWork]:
+    if user.role == UserRole.TEACHER:
+        qs = teacher_lab_works_qs(user)
+        if discipline_id is not None:
+            qs = qs.filter(disciplines=discipline_id)
+        return qs
     qs = LabWork.objects.filter(
         is_published=True, is_archived=False, disciplines__semester__is_active=True
     ).distinct()
@@ -284,3 +368,21 @@ def staff_manual_lab_work_items(user: User, student: User) -> QuerySet[LabWork]:
     if not plan_ids:
         return LabWork.objects.none()
     return staff_writable_lab_works_qs(user).filter(pk__in=plan_ids)
+
+
+def user_can_view_methodics(user: User, lab_work: LabWork) -> bool:
+    """Видимость методичек: только авторизованным и только по своей зоне.
+
+    Студент — ЛР из своего учебного плана; завлаб — работы своей лаборатории
+    (включая неопубликованные); сотрудник и преподаватель — по обычному
+    стафф-скоупу; сисадмин — всё.
+    """
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if user.role == UserRole.SYS_ADMIN:
+        return True
+    if user.role == UserRole.STUDENT:
+        return student_can_access_lab_work(user, lab_work.pk)
+    if user.role == UserRole.LAB_HEAD:
+        return lab_head_lab_works_qs(user).filter(pk=lab_work.pk).exists()
+    return staff_lab_works_qs(user).filter(pk=lab_work.pk).exists()

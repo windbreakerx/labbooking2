@@ -11,6 +11,25 @@
     <p class="muted">{{ release.label }}</p>
   </div>
 {% endif %}
+{% if methodics %}
+  <section class="card">
+    <div class="card__header">
+      <h2 class="card__title">Методички</h2>
+    </div>
+    <ul class="methodics-list">
+      {% for methodic in methodics %}
+        <li>
+          <strong>{{ methodic.display_name }}</strong>
+          <span class="muted">— {{ methodic.uploaded_at|date:"d.m.Y" }}</span>
+          <span class="cluster">
+            <a class="button button--secondary button--sm" href="{% url 'methodic-file' methodic.pk %}" target="_blank" rel="noopener">Просмотреть</a>
+            <a class="button button--secondary button--sm" href="{% url 'methodic-file' methodic.pk %}?download=1">Скачать</a>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
 {% if by_date %}
   {% for date, slots in by_date %}
     <section class="card">

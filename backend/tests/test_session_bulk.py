@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from apps.academics.models import Department
 from apps.scheduling.models import Holiday, LabSession, LabSessionStatus, LabStand
 from apps.scheduling.services.session_admin import create_session
 from apps.scheduling.services.session_bulk import (
@@ -14,7 +15,7 @@ from apps.scheduling.services.session_bulk import (
     copy_week,
     create_series,
 )
-from apps.users.models import User, UserRole
+from apps.users.models import User, UserProfile, UserRole
 
 from .conftest import (
     create_lab_work,
@@ -159,6 +160,9 @@ class TestSessionBulk:
             last_name="Преподаватель",
             role=UserRole.TEACHER,
         )
+        department = Department.objects.create(title="Кафедра серии")
+        lab_work.disciplines.update(department=department)
+        UserProfile.objects.create(user=teacher, department=department)
         start = next_open_weekday_pair(days_ahead=3)
         third = start + timedelta(weeks=2)
         other_lab = create_lab_work(

@@ -9,6 +9,7 @@ from datetime import datetime
 
 from django.contrib import messages
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views import View
 
@@ -17,10 +18,12 @@ from apps.bookings.services.booking import BookingService
 from apps.scheduling.models import LabSession, LabSessionStatus, LabStand
 from apps.scheduling.services.catalog_admin import (
     CatalogError,
+    add_methodic,
     archive_lab_work,
     capacity_exceeds_stands,
     create_lab_work,
     create_room,
+    delete_methodic,
     update_lab_work,
     update_room,
 )
@@ -110,11 +113,21 @@ class LabHeadLabWorksView(PortalLaboratoryMixin, View):
         laboratory = self.laboratory
         lab_works = list(
             laboratory.lab_works.filter(is_archived=False)
-            .prefetch_related("disciplines", "disciplines__semester", "stands")
+            .prefetch_related(
+                "disciplines",
+                "disciplines__semester",
+                "stands",
+                "methodics_files",
+                "methodics_files__uploaded_by",
+            )
             .order_by("number", "title")
         )
         edit_pk = request.GET.get("edit", "")
         edit_work = next((work for work in lab_works if str(work.pk) == edit_pk), None)
+        methodics_pk = request.GET.get("methodics", "")
+        methodics_work = next(
+            (work for work in lab_works if str(work.pk) == methodics_pk), None
+        )
         disciplines = [
             binding.discipline
             for binding in laboratory.discipline_bindings.filter(
@@ -141,6 +154,7 @@ class LabHeadLabWorksView(PortalLaboratoryMixin, View):
                 "edit_stand_ids": {stand.pk for stand in edit_work.stands.all()} if edit_work else set(),
                 "duration_choices": DURATION_CHOICES,
                 "release_rows": release_rows,
+                "methodics_work": methodics_work,
             },
         )
 
@@ -267,3 +281,46 @@ class LabHeadLabWorkDeleteView(PortalLaboratoryMixin, View):
         lab_work.delete()
         messages.success(request, f"Работа «{lab_work.title}» удалена.")
         return redirect("lab-head-lab-works")
+
+
+class LabHeadMethodicUploadView(PortalLaboratoryMixin, View):
+    """Загрузка PDF-методички: только завлаб (позже — преподаватель)."""
+
+    def post(self, request, pk):
+        lab_work = self.laboratory.lab_works.filter(pk=pk).first()
+        if lab_work is None:
+            messages.error(request, "Работа не найдена в вашей лаборатории.")
+            return redirect("lab-head-lab-works")
+        try:
+            methodic = add_methodic(
+                laboratory=self.laboratory,
+                lab_work=lab_work,
+                data=request.POST,
+                files=request.FILES,
+                actor=request.user,
+            )
+        except CatalogError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, f"Методичка «{methodic.display_name}» загружена.")
+        return redirect(f"{reverse('lab-head-lab-works')}?methodics={lab_work.pk}")
+
+
+class LabHeadMethodicDeleteView(PortalLaboratoryMixin, View):
+    def post(self, request, pk, methodic_pk):
+        lab_work = self.laboratory.lab_works.filter(pk=pk).first()
+        methodic = (
+            lab_work.methodics_files.filter(pk=methodic_pk).first() if lab_work else None
+        )
+        if methodic is None:
+            messages.error(request, "Методичка не найдена в вашей лаборатории.")
+            return redirect("lab-head-lab-works")
+        try:
+            delete_methodic(
+                laboratory=self.laboratory, methodic=methodic, actor=request.user
+            )
+        except CatalogError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Методичка удалена.")
+        return redirect(f"{reverse('lab-head-lab-works')}?methodics={lab_work.pk}")

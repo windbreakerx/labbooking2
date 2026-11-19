@@ -9,6 +9,7 @@
 
 from datetime import date, datetime, time, timedelta
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -24,6 +25,7 @@ from apps.bookings.models import (
 from apps.scheduling.models import (
     LabSession,
     LabSessionBookingMode,
+    LabSessionGroupPart,
     LabSessionStatus,
     Room,
 )
@@ -123,14 +125,12 @@ def _resolve_room(data: dict, laboratory) -> Room:
         raise SessionError("Аудитория не найдена.")
     if room.is_blocked:
         raise SessionError("Аудитория заблокирована.")
-    if room.training_center_id != laboratory.training_center_id:
-        raise SessionError("Аудитория принадлежит другому учебному центру.")
-    if room.laboratory_id and room.laboratory_id != laboratory.pk:
-        raise SessionError("Аудитория закреплена за другой лабораторией.")
+    if room.laboratory_id != laboratory.pk:
+        raise SessionError("Аудитория не закреплена за вашей лабораторией.")
     return room
 
 
-def _resolve_teacher(data: dict) -> User | None:
+def _resolve_teacher(data: dict, laboratory, lab_work: LabWork) -> User | None:
     teacher_id = data.get("teacher") or data.get("teacher_id")
     if teacher_id in (None, "", 0):
         return None
@@ -138,22 +138,58 @@ def _resolve_teacher(data: dict) -> User | None:
         user = User.objects.get(pk=int(teacher_id))
     except (ValueError, User.DoesNotExist):
         raise SessionError("Преподаватель не найден.")
-    if user.role not in (UserRole.TEACHER, UserRole.LAB_ADMIN, UserRole.LAB_HEAD, UserRole.SYS_ADMIN):
-        raise SessionError("Выбранный пользователь не может быть преподавателем.")
-    return user
+    if user.role == UserRole.SYS_ADMIN:
+        return user
+    try:
+        profile = user.profile
+    except ObjectDoesNotExist:
+        profile = None
+    if user.role == UserRole.TEACHER:
+        department_ids = set(
+            lab_work.disciplines.exclude(department__isnull=True).values_list(
+                "department_id", flat=True
+            )
+        )
+        if (
+            profile is None
+            or profile.department_id is None
+            or profile.department_id not in department_ids
+        ):
+            raise SessionError(
+                "Преподаватель не относится к кафедре этой лабораторной работы."
+            )
+        return user
+    if profile is not None and (
+        profile.laboratory_id == laboratory.pk
+        or (
+            profile.laboratory_id is None
+            and profile.training_center_id == laboratory.training_center_id
+        )
+    ):
+        return user
+    raise SessionError("Преподаватель не относится к вашей лаборатории.")
 
 
-def _resolve_occupant_group(data: dict) -> StudentGroup | None:
+def _resolve_occupant_group(
+    data: dict, *, lab_work: LabWork, semester_id: int | None
+) -> StudentGroup | None:
     group_id = data.get("occupant_group") or data.get("occupant_group_id")
     if group_id in (None, "", 0):
         return None
     try:
-        return StudentGroup.objects.get(pk=int(group_id))
+        group = StudentGroup.objects.get(pk=int(group_id))
     except (ValueError, StudentGroup.DoesNotExist):
         raise SessionError("Группа-оккупант не найдена.")
+    from apps.academics.scope import group_can_take_lab_work
+
+    if not group_can_take_lab_work(group, lab_work, semester_id):
+        raise SessionError("Группа не изучает эту лабораторную работу.")
+    return group
 
 
-def _resolve_allowed_groups(data: dict) -> list[StudentGroup]:
+def _resolve_allowed_groups(
+    data: dict, *, lab_work: LabWork, semester_id: int | None
+) -> list[StudentGroup]:
     raw = data.get("allowed_student_groups") or data.get("allowed_groups") or []
     if isinstance(raw, str):
         raw = [item for item in raw.split(",") if item.strip()]
@@ -168,6 +204,11 @@ def _resolve_allowed_groups(data: dict) -> list[StudentGroup]:
     groups = list(StudentGroup.objects.filter(pk__in=ids))
     if len(groups) != len(ids):
         raise SessionError("Некоторые группы не найдены.")
+    from apps.academics.scope import group_can_take_lab_work
+
+    for group in groups:
+        if not group_can_take_lab_work(group, lab_work, semester_id):
+            raise SessionError(f"Группа {group.name} не изучает эту лабораторную работу.")
     return groups
 
 
@@ -256,21 +297,23 @@ def _active_booking_count(session: LabSession) -> int:
 
 
 def _create_group_bookings(session: LabSession, actor: User | None) -> int:
-    """Создаёт записи GROUP для всех студентов occupant_group."""
+    """Создаёт записи GROUP для выбранной части occupant_group."""
     group = session.occupant_group
     if group is None:
         return 0
-    discipline = session.lab_work.disciplines.first()
+    from apps.academics.scope import group_discipline_ids
+
+    discipline_ids = group_discipline_ids(group, session.semester_id)
+    discipline = (
+        session.lab_work.disciplines.filter(pk__in=discipline_ids).first()
+        or session.lab_work.disciplines.first()
+    )
     if discipline is None:
         raise SessionError("У лабораторной работы нет дисциплин — групповая бронь невозможна.")
-    students = list(
-        User.objects.filter(
-            role=UserRole.STUDENT,
-            profile__student_group=group,
-        )
-    )
+    student_ids = group.student_ids_for_part(session.group_part)
+    students = list(User.objects.filter(pk__in=student_ids, role=UserRole.STUDENT))
     if not students:
-        raise SessionError("В группе-оккупанте нет студентов.")
+        raise SessionError("В выбранной части группы нет студентов.")
     created = 0
     for student in students:
         booking = Booking.objects.create(
@@ -288,7 +331,39 @@ def _create_group_bookings(session: LabSession, actor: User | None) -> int:
             booking=booking, status=BookingStatus.BOOKED, changed_by=actor, note="Групповая бронь"
         )
         created += 1
+    AuditLog.objects.create(
+        actor=actor,
+        action="booking.group_create",
+        entity_type="LabSession",
+        entity_id=session.pk,
+        payload={
+            "group_id": group.pk,
+            "group_part": session.group_part,
+            "discipline_id": discipline.pk,
+            "bookings": created,
+        },
+    )
     return created
+
+
+def _log_group_overflow(session: LabSession, actor: User | None) -> None:
+    """Группа больше аудитории: не блокируем, но оставляем след и предупреждение."""
+    if session.booking_mode != LabSessionBookingMode.GROUP:
+        return
+    if session.capacity <= session.room.capacity:
+        return
+    AuditLog.objects.create(
+        actor=actor,
+        action="session.group_overflow",
+        entity_type="LabSession",
+        entity_id=session.pk,
+        payload={
+            "group_id": session.occupant_group_id,
+            "group_part": session.group_part,
+            "students": session.capacity,
+            "room_capacity": session.room.capacity,
+        },
+    )
 
 
 def clean_session_payload(
@@ -306,7 +381,7 @@ def clean_session_payload(
     semester = _resolve_semester(data)
     lab_work = _resolve_lab_work(data, laboratory)
     room = room or _resolve_room(data, laboratory)
-    teacher = _resolve_teacher(data)
+    teacher = _resolve_teacher(data, laboratory, lab_work)
 
     starts_at = _resolve_starts_at(data)
 
@@ -321,16 +396,25 @@ def clean_session_payload(
     if mode not in LabSessionBookingMode.values:
         raise SessionError("Некорректный режим бронирования.")
 
-    occupant_group = _resolve_occupant_group(data)
-    allowed_groups = _resolve_allowed_groups(data)
+    occupant_group = _resolve_occupant_group(
+        data, lab_work=lab_work, semester_id=semester.pk
+    )
+    allowed_groups = _resolve_allowed_groups(
+        data, lab_work=lab_work, semester_id=semester.pk
+    )
+    group_part = data.get("group_part", LabSessionGroupPart.ALL)
+    if group_part not in LabSessionGroupPart.values:
+        raise SessionError("Некорректная часть группы.")
 
     if mode == LabSessionBookingMode.GROUP:
         if occupant_group is None:
             raise SessionError("Для групповой брони укажите группу-оккупант.")
         if allowed_groups:
             raise SessionError("Групповая бронь не совместима с ограничением по группам.")
-    elif occupant_group is not None:
-        raise SessionError("Группа-оккупант допустима только для групповой брони.")
+    else:
+        group_part = LabSessionGroupPart.ALL
+        if occupant_group is not None:
+            raise SessionError("Группа-оккупант допустима только для групповой брони.")
 
     _validate_schedule_conflicts(
         lab_work=lab_work,
@@ -359,6 +443,8 @@ def clean_session_payload(
             )
         if session.booking_mode != mode and booked:
             raise SessionError("Нельзя менять режим бронирования при активных записях.")
+        if session.group_part != group_part and booked:
+            raise SessionError("Нельзя менять часть группы при активных записях.")
         if (
             mode == LabSessionBookingMode.GROUP
             and session.occupant_group_id
@@ -375,6 +461,7 @@ def clean_session_payload(
         "starts_at": starts_at,
         "ends_at": ends_at,
         "booking_mode": mode,
+        "group_part": group_part,
         "occupant_group": occupant_group,
         "allowed_groups": allowed_groups,
     }
@@ -392,6 +479,7 @@ def create_session(laboratory, data: dict, *, actor: User | None = None) -> LabS
         ends_at=payload["ends_at"],
         status=LabSessionStatus.OPEN,
         booking_mode=payload["booking_mode"],
+        group_part=payload["group_part"],
         occupant_group=payload["occupant_group"],
     )
     if payload["allowed_groups"]:
@@ -405,6 +493,7 @@ def create_session(laboratory, data: dict, *, actor: User | None = None) -> LabS
 
     if session.booking_mode == LabSessionBookingMode.GROUP:
         _create_group_bookings(session, actor)
+        _log_group_overflow(session, actor)
 
     AuditLog.objects.create(
         actor=actor,
@@ -433,6 +522,7 @@ def update_session(
     session.starts_at = payload["starts_at"]
     session.ends_at = payload["ends_at"]
     session.booking_mode = payload["booking_mode"]
+    session.group_part = payload["group_part"]
     session.occupant_group = payload["occupant_group"]
     session.save()
 
@@ -444,6 +534,7 @@ def update_session(
     if session.booking_mode == LabSessionBookingMode.GROUP and not _active_booking_count(session):
         session.bookings.filter(current_status=BookingStatus.BOOKED).delete()
         _create_group_bookings(session, actor)
+    _log_group_overflow(session, actor)
 
     AuditLog.objects.create(
         actor=actor,

@@ -1,0 +1,12 @@
+[Unit]
+Description=LabBooking: ежечасный бэкап БД и media
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=2m
+AccuracySec=30s
+Unit=labbooking-backup.service
+
+[Install]
+WantedBy=timers.target

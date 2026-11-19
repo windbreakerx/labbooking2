@@ -103,6 +103,10 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+# Файлы методичек в проде отдаёт nginx по X-Accel-Redirect (см. nginx.conf).
+# В dev включён FileResponse, иначе runserver не умеет этот заголовок.
+USE_X_ACCEL_REDIRECT = env.bool("USE_X_ACCEL_REDIRECT", default=False)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Redis cache (dev overrides to LocMemCache — see settings/dev.py).
@@ -131,6 +135,11 @@ Q_CLUSTER = {
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+
+# Лимит POST-запросов на вход в Django-админку (свой view, не WebLoginView).
+ADMIN_LOGIN_RATE = env("ADMIN_LOGIN_RATE", default="10/m")
+# Лимит POST-запросов на обычный вход (email + пароль).
+LOGIN_RATE = env("LOGIN_RATE", default="10/m")
 
 LOGGING = {
     "version": 1,

@@ -7,7 +7,7 @@
 (apps/scheduling/views/catalog.py) — сервис не зависит от bookings.
 """
 
-from apps.academics.models import ALLOWED_LAB_DURATIONS, LabWork
+from apps.academics.models import ALLOWED_LAB_DURATIONS, LabWork, LabWorkMethodics
 from apps.scheduling.models import Laboratory, LabStand, Room
 
 
@@ -194,7 +194,60 @@ def archive_lab_work(lab_work: LabWork) -> None:
 
 
 def lab_work_booking_count(lab_work: LabWork) -> int:
-    """Все записи студентов по ЛР: удаление с историей запрещено (FK CASCADE)."""
+    """Все записи студентов по ЛР: удаление с историей запрещено (FK PROTECT)."""
     from apps.bookings.models import Booking
 
     return Booking.objects.filter(lab_work=lab_work).count()
+
+
+def add_methodic(*, laboratory: Laboratory, lab_work: LabWork, data, files, actor=None) -> LabWorkMethodics:
+    """Загрузить PDF-методичку в ЛР лаборатории (имя/размер/сигнатуру проверяет модель)."""
+    from django.core.exceptions import ValidationError
+
+    from apps.bookings.models import AuditLog
+
+    if not laboratory.lab_works.filter(pk=lab_work.pk).exists():
+        raise CatalogError("Работа не принадлежит вашей лаборатории.")
+    upload = files.get("file")
+    if upload is None:
+        raise CatalogError("Выберите PDF-файл.")
+
+    methodic = LabWorkMethodics(
+        lab_work=lab_work,
+        file=upload,
+        title=(data.get("title") or "").strip(),
+        uploaded_by=actor,
+    )
+    try:
+        methodic.full_clean()
+    except ValidationError as exc:
+        raise CatalogError(" ".join(exc.messages)) from exc
+    methodic.save()
+    AuditLog.objects.create(
+        actor=actor,
+        action="methodic.add",
+        entity_type="LabWorkMethodics",
+        entity_id=methodic.pk,
+        payload={"lab_work_id": lab_work.pk, "file": methodic.file.name},
+    )
+    return methodic
+
+
+def delete_methodic(*, laboratory: Laboratory, methodic: LabWorkMethodics, actor=None) -> None:
+    """Удалить методичку и её файл; чужая лаборатория — ошибка."""
+    from apps.bookings.models import AuditLog
+
+    if not laboratory.lab_works.filter(pk=methodic.lab_work_id).exists():
+        raise CatalogError("Методичка не принадлежит вашей лаборатории.")
+    methodic_id = methodic.pk
+    lab_work_id = methodic.lab_work_id
+    filename = methodic.file.name
+    # Файл удаляет post_delete-сигнал LabWorkMethodics.
+    methodic.delete()
+    AuditLog.objects.create(
+        actor=actor,
+        action="methodic.delete",
+        entity_type="LabWorkMethodics",
+        entity_id=methodic_id,
+        payload={"lab_work_id": lab_work_id, "file": filename},
+    )

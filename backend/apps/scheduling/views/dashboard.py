@@ -1,7 +1,5 @@
 """Dashboard завлаба/сисадмина: KPI, графики Chart.js, быстрые ссылки."""
 
-import json
-
 from django.shortcuts import render
 from django.views import View
 
@@ -28,10 +26,12 @@ class LabHeadDashboardView(PortalLaboratoryMixin, View):
         context = {
             "laboratory": laboratory,
             "kpi": kpi,
-            "room_labels": json.dumps([row["room"] for row in room_data]),
-            "room_values": json.dumps([row["utilization"] for row in room_data]),
-            "curriculum_labels": json.dumps([row["discipline"] for row in curriculum_data]),
-            "curriculum_values": json.dumps([row["progress"] for row in curriculum_data]),
+            # Списки, не json.dumps: шаблон сериализует через json_script,
+            # который экранирует </script> в названиях комнат и дисциплин.
+            "room_labels": [row["room"] for row in room_data],
+            "room_values": [row["utilization"] for row in room_data],
+            "curriculum_labels": [row["discipline"] for row in curriculum_data],
+            "curriculum_values": [row["progress"] for row in curriculum_data],
             "no_show_top": no_show_top,
         }
         return render(request, self.template_name, context)

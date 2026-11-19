@@ -145,6 +145,7 @@ class BookWizardView(StudentRequiredMixin, View):
                 "lab_work": lab_work,
                 "by_date": sorted(by_date.items()),
                 "release": release,
+                "methodics": lab_work.methodics_files.select_related("uploaded_by"),
             },
         )
 

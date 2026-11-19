@@ -132,6 +132,12 @@ def create_series(laboratory, data: dict, *, actor=None) -> dict:
         "semester_id": semester.pk,
         "teacher_id": first_payload["teacher"].pk if first_payload["teacher"] else None,
         "booking_mode": first_payload["booking_mode"],
+        "group_part": first_payload["group_part"],
+        "occupant_group_id": (
+            first_payload["occupant_group"].pk
+            if first_payload["occupant_group"]
+            else None
+        ),
     }
     if first_payload["allowed_groups"]:
         base_data["allowed_student_groups"] = [g.pk for g in first_payload["allowed_groups"]]
@@ -140,6 +146,7 @@ def create_series(laboratory, data: dict, *, actor=None) -> dict:
     holiday_dates = set(Holiday.objects.values_list("date", flat=True)) if skip_holidays else set()
 
     created = 0
+    overflows = 0
     skipped_holidays = 0
     skipped_duplicates = 0
     tz = timezone.get_current_timezone()
@@ -161,11 +168,14 @@ def create_series(laboratory, data: dict, *, actor=None) -> dict:
             **base_data,
             "starts_at": starts_at.isoformat(),
         }
-        _create_on_date(laboratory, occurrence_data, occurrence_date, actor=actor)
+        session = _create_on_date(laboratory, occurrence_data, occurrence_date, actor=actor)
+        if session.capacity > session.room.capacity:
+            overflows += 1
         created += 1
 
     return {
         "created": created,
+        "overflows": overflows,
         "skipped_holidays": skipped_holidays,
         "skipped_duplicates": skipped_duplicates,
     }
@@ -181,6 +191,7 @@ def _copy_session(session: LabSession, target_date: date) -> dict:
         "date": target_date.isoformat(),
         "time": local_start.strftime("%H:%M"),
         "booking_mode": session.booking_mode,
+        "group_part": session.group_part,
         "allowed_student_groups": list(
             session.allowed_student_groups.values_list("pk", flat=True)
         ),

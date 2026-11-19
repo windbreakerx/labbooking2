@@ -1,12 +1,20 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
+    # Даём PostgreSQL время на корректное завершение (SIGINT + fast shutdown),
+    # иначе Docker прибьёт процесс через 10 секунд.
+    stop_grace_period: 1m
+    shm_size: 256mb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-labbooking2}
       POSTGRES_USER: ${POSTGRES_USER:-labbooking}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-labbooking}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # Прод (Linux): POSTGRES_DATA_DIR=/srv/labbooking2/pgdata — bind mount,
+      # данные видны на хосте и удобны для бэкапа.
+      # Без переменной — именованный том (dev, Windows).
+      - ${POSTGRES_DATA_DIR:-postgres_data}:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
@@ -17,6 +25,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -29,6 +38,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
@@ -40,7 +51,8 @@ services:
       REDIS_URL: redis://redis:6379/0
     volumes:
       - staticfiles_data:/app/staticfiles
-      - media_data:/app/media
+      # Прод: MEDIA_DATA_DIR=/srv/labbooking2/media — bind mount для бэкапа файлов.
+      - ${MEDIA_DATA_DIR:-media_data}:/app/media
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -57,12 +69,13 @@ services:
 
   nginx:
     image: nginx:1.27-alpine
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - staticfiles_data:/app/staticfiles:ro
-      - media_data:/app/media:ro
+      - ${MEDIA_DATA_DIR:-media_data}:/app/media:ro
     depends_on:
       web:
         condition: service_healthy
@@ -71,6 +84,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
     command: python manage.py qcluster
     env_file:
       - .env

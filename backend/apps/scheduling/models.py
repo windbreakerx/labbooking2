@@ -95,6 +95,12 @@ class LabSessionBookingMode(models.TextChoices):
     GROUP = "GROUP", "Групповая бронь"
 
 
+class LabSessionGroupPart(models.TextChoices):
+    ALL = "ALL", "Вся группа"
+    FIRST = "FIRST", "Первая половина"
+    SECOND = "SECOND", "Вторая половина"
+
+
 class LabSessionStatus(models.TextChoices):
     DRAFT = "DRAFT", "Черновик"
     OPEN = "OPEN", "Открыта"
@@ -115,6 +121,12 @@ class LabSession(models.Model):
         max_length=16,
         choices=LabSessionBookingMode.choices,
         default=LabSessionBookingMode.INDIVIDUAL,
+    )
+    group_part = models.CharField(
+        "Часть группы",
+        max_length=8,
+        choices=LabSessionGroupPart.choices,
+        default=LabSessionGroupPart.ALL,
     )
     allowed_student_groups = models.ManyToManyField(
         StudentGroup,
@@ -155,9 +167,9 @@ class LabSession(models.Model):
 
     @property
     def capacity(self) -> int:
-        """Мест на пару: для групповой брони — размер группы, иначе вместимость ЛР."""
+        """Мест на пару: для групповой брони — выбранная часть группы, иначе вместимость ЛР."""
         if self.booking_mode == LabSessionBookingMode.GROUP and self.occupant_group_id:
-            return self.occupant_group.students.count()
+            return len(self.occupant_group.student_ids_for_part(self.group_part))
         return self.lab_work.capacity
 
     @property

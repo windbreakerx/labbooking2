@@ -73,7 +73,7 @@ class TestSeedDemo:
         assert rooms.get(number="3428").capacity == 44
 
         head = User.objects.get(email="zavlab.pilot@spmi.ru")
-        assert head.role == UserRole.LAB_HEAD and head.is_staff
+        assert head.role == UserRole.LAB_HEAD and not head.is_staff
         assert head.profile.laboratory == laboratory
         assert User.objects.get(email="operator1.pilot@spmi.ru").role == UserRole.LAB_ADMIN
 
@@ -212,6 +212,19 @@ class TestImportDekanatCsv:
         assert user.profile.training_center == seeded
         assert user.profile.laboratory == Laboratory.objects.get(training_center=seeded)
         assert set(user.profile.disciplines.values_list("code", flat=True)) == {"NGF-001", "NGF-002"}
+
+    def test_staff_without_is_staff_column_gets_no_admin_access(self, seeded, tmp_path):
+        staff = _write_csv(
+            tmp_path,
+            "staff.csv",
+            ["email", "password", "last_name", "first_name", "role", "training_center_number", "discipline_codes"],
+            [{"email": "noadmin@spmi.ru", "password": "", "last_name": "Б", "first_name": "Б",
+              "role": "LAB_HEAD", "training_center_number": "1", "discipline_codes": ""}],
+        )
+        _run_import(staff, "staff")
+        user = User.objects.get(email="noadmin@spmi.ru")
+        assert user.role == UserRole.LAB_HEAD
+        assert user.is_staff is False
 
     def test_teachers_without_laboratory(self, seeded, tmp_path):
         teachers = _write_csv(

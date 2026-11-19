@@ -76,9 +76,15 @@ class LabWorkAdmin(admin.ModelAdmin):
 
 @admin.register(LabWorkMethodics)
 class LabWorkMethodicsAdmin(admin.ModelAdmin):
-    list_display = ("display_name", "lab_work", "uploaded_at")
+    list_display = ("display_name", "lab_work", "uploaded_by", "uploaded_at")
     list_filter = ("uploaded_at",)
     search_fields = ("title", "lab_work__title")
+    readonly_fields = ("uploaded_at",)
+
+    def save_model(self, request, obj, form, change):
+        if obj.uploaded_by_id is None:
+            obj.uploaded_by = request.user
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(GroupDisciplineLoad)
