@@ -18,7 +18,7 @@
         <span class="ticket-row__side">
           <span class="badge badge--{{ booking.current_status|lower }}">{{ booking.get_current_status_display }}</span>
           <form method="post" action="{% url 'cancel-booking' booking.pk %}"
-                onsubmit="return confirm('Отменить запись на «{{ booking.lab_work.title|escapejs }}»?');">
+                data-confirm="Отменить запись на «{{ booking.lab_work.title }}»?">
             {% csrf_token %}
             <button class="button button--danger button--sm" type="submit">Отменить</button>
           </form>

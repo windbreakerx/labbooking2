@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% load static %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}Обзор{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Dashboard</h1>
+  <div>
+    <p class="eyebrow">Кабинет завлаба</p>
+    <h1>Обзор</h1>
+  </div>
   <span class="page-header__aside">{{ laboratory.name }}</span>
 </div>
 
@@ -81,66 +84,7 @@
 {{ room_values|json_script:"room-values" }}
 {{ curriculum_labels|json_script:"curriculum-labels" }}
 {{ curriculum_values|json_script:"curriculum-values" }}
-<script src="{% static 'js/chart.umd.min.js' %}"></script>
-<script>
-  const roomLabels = JSON.parse(document.getElementById('room-labels').textContent);
-  const roomValues = JSON.parse(document.getElementById('room-values').textContent);
-  const curriculumLabels = JSON.parse(document.getElementById('curriculum-labels').textContent);
-  const curriculumValues = JSON.parse(document.getElementById('curriculum-values').textContent);
-
-  const commonOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
-    scales: { y: { beginAtZero: true, max: 100 } },
-  };
-
-  new Chart(document.getElementById('roomChart'), {
-    type: 'bar',
-    data: {
-      labels: roomLabels,
-      datasets: [{
-        label: 'Заполняемость мест, %',
-        data: roomValues,
-        backgroundColor: 'rgba(54, 162, 235, 0.6)',
-        borderColor: 'rgba(54, 162, 235, 1)',
-        borderWidth: 1,
-      }],
-    },
-    options: commonOptions,
-  });
-
-  new Chart(document.getElementById('curriculumChart'), {
-    type: 'bar',
-    data: {
-      labels: curriculumLabels,
-      datasets: [{
-        label: 'Выполнение плана, %',
-        data: curriculumValues,
-        backgroundColor: 'rgba(75, 192, 192, 0.6)',
-        borderColor: 'rgba(75, 192, 192, 1)',
-        borderWidth: 1,
-      }],
-    },
-    options: commonOptions,
-  });
-
-  new Chart(document.getElementById('statusChart'), {
-    type: 'doughnut',
-    data: {
-      labels: ['Посетил', 'Записан', 'Неявка', 'Отмены записей', 'Отменённые слоты'],
-      datasets: [{
-        data: [{{ kpi.visited }}, {{ kpi.booked }}, {{ kpi.no_show }}, {{ kpi.cancelled }}, {{ kpi.slot_cancelled }}],
-        backgroundColor: [
-          'rgba(75, 192, 192, 0.7)',
-          'rgba(54, 162, 235, 0.7)',
-          'rgba(255, 159, 64, 0.7)',
-          'rgba(201, 203, 207, 0.7)',
-          'rgba(153, 102, 255, 0.7)',
-        ],
-      }],
-    },
-    options: { responsive: true, maintainAspectRatio: false },
-  });
-</script>
+{{ kpi|json_script:"kpi-data" }}
+<script src="{% static 'js/chart.umd.min.js' %}?v=20261120" defer></script>
+<script src="{% static 'js/dashboard.js' %}?v=20261120c" defer></script>
 {% endblock %}

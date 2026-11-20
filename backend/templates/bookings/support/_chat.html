@@ -11,7 +11,7 @@
       {% if ticket_overdue %}<span class="badge badge--warning">просрочено</span>{% endif %}
       <form hx-post="{% url 'staff-support-status' ticket.pk %}" hx-target="#chat-pane" hx-swap="innerHTML">
         {% csrf_token %}
-        <select name="status" aria-label="Сменить статус" onchange="this.form.requestSubmit()">
+        <select name="status" aria-label="Сменить статус" data-auto-submit hx-disabled-elt="this">
           <option value="">Статус…</option>
           <option value="IN_PROGRESS">В работе</option>
           <option value="RESOLVED">Отвечено</option>
@@ -26,9 +26,12 @@
   </div>
   <form class="composer" hx-post="{% url 'staff-support-reply' ticket.pk %}"
         hx-target="#chat-messages" hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find .htmx-indicator"
         hx-on::after-request="if(event.detail.successful) this.reset()">
     {% csrf_token %}
     <textarea name="body" rows="1" required placeholder="Ответ студенту…" data-enter-submit></textarea>
+    <span class="field-hint htmx-indicator" role="status">Отправка…</span>
     <button class="button" type="submit">Отправить</button>
   </form>
 </div>

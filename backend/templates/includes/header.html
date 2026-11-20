@@ -23,7 +23,9 @@
           <a class="nav__link{% if 'staff/support' in request.path %} nav__link--current{% endif %}" href="{% url 'staff-support' %}">Обращения</a>
         {% endif %}
       </nav>
-      <div class="header__side">
+    {% endif %}
+    <div class="header__side">
+      {% if user.is_authenticated %}
         {% if is_sys_admin %}
           <form class="lab-selector" method="post" action="{% url 'lab-head-select-lab' %}">
             {% csrf_token %}
@@ -42,7 +44,30 @@
           {% csrf_token %}
           <button class="button button--secondary button--sm" type="submit">Выйти</button>
         </form>
+      {% endif %}
+      <div class="theme-switch" role="group" aria-label="Тема оформления">
+        <button class="theme-switch__button" type="button" data-set-theme="glass"
+                aria-label="Тема «Стекло»" aria-pressed="false" title="Стекло">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3c3 3.5 5.5 6 5.5 9a5.5 5.5 0 0 1-11 0c0-3 2.5-5.5 5.5-9Z"/>
+          </svg>
+        </button>
+        <button class="theme-switch__button" type="button" data-set-theme="graphite"
+                aria-label="Тема «Графит»" aria-pressed="false" title="Графит">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h9"/>
+          </svg>
+        </button>
+        <button class="theme-switch__button" type="button" data-set-theme="night"
+                aria-label="Тема «Ночь»" aria-pressed="false" title="Ночь">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z"/>
+          </svg>
+        </button>
       </div>
-    {% endif %}
+    </div>
   </div>
 </header>

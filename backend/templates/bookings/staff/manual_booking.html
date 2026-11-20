@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}Ручная запись{% endblock %}
-{% block extra_js %}<script src="{% static 'js/staff-booking.js' %}" defer></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/staff-booking.js' %}?v=20261120" defer></script>{% endblock %}
 {% block content %}
 <div class="page-header">
   <a class="button button--secondary button--sm" href="{% url 'staff-bookings' %}">← Записи</a>
@@ -16,7 +16,9 @@
     <input type="search" name="q" placeholder="Фамилия, имя, email или группа — минимум 2 символа"
            aria-label="Поиск студента" autocomplete="off"
            hx-get="{% url 'staff-manual-students' %}" hx-trigger="input changed delay:300ms, search"
-           hx-target="#student-results" hx-swap="innerHTML">
+           hx-target="#student-results" hx-swap="innerHTML"
+           hx-indicator="next .htmx-indicator">
+    <p class="field-hint htmx-indicator" role="status">Поиск…</p>
     <div id="student-results" class="student-results"></div>
     <input type="hidden" name="student_id" id="student-id">
     <p class="field-hint" id="selected-student" hidden></p>

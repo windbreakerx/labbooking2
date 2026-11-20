@@ -2,12 +2,14 @@
   <label for="id_lab_work">Лабораторная работа</label>
   <select name="lab_work_id" id="id_lab_work"
           hx-get="{% url 'staff-manual-slots' %}" hx-trigger="change" hx-include="this"
-          hx-target="#slots" hx-swap="innerHTML">
+          hx-target="#slots" hx-swap="innerHTML"
+          hx-disabled-elt="this" hx-indicator="#slots-loading">
     <option value="">— выберите работу —</option>
     {% for lab_work in lab_works %}
       <option value="{{ lab_work.pk }}">{{ lab_work }}</option>
     {% endfor %}
   </select>
+  <p class="field-hint htmx-indicator" id="slots-loading" role="status">Загрузка слотов…</p>
 {% else %}
   <p class="field-hint">В учебном плане группы нет работ вашей лаборатории.</p>
 {% endif %}

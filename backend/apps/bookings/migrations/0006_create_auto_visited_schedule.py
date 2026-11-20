@@ -18,7 +18,9 @@ def create_auto_visited_schedule(apps, schema_editor):
         func="apps.bookings.tasks.mark_visited_task",
         defaults={
             "name": "Автопосещение завершённых слотов",
-            "schedule_type": Schedule.DAILY,
+            # Историческая модель из apps.get_model не несёт константы
+            # Schedule.DAILY, поэтому используем значение из choices.
+            "schedule_type": "D",
             "next_run": next_run,
             "repeats": -1,
         },

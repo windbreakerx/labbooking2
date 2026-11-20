@@ -2,7 +2,10 @@
 {% block title %}Лабораторные работы{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Лабораторные работы</h1>
+  <div>
+    <p class="eyebrow">Кабинет завлаба</p>
+    <h1>Лабораторные работы</h1>
+  </div>
   <span class="page-header__aside">{{ laboratory.name }}</span>
 </div>
 
@@ -75,7 +78,7 @@
               <a class="button button--secondary button--sm" href="?edit={{ work.pk }}">Изменить</a>
               <a class="button button--secondary button--sm" href="?methodics={{ work.pk }}">Методички{% if work.methodics_files.all %} ({{ work.methodics_files.all|length }}){% endif %}</a>
               <form method="post" action="{% url 'lab-head-lab-work-delete' work.pk %}"
-                    onsubmit="return confirm('Удалить работу «{{ work.title|escapejs }}»? Если по ней есть слоты, она уйдёт в архив.');">
+                    data-confirm="Удалить работу «{{ work.title }}»? Если по ней есть слоты, она уйдёт в архив.">
                 {% csrf_token %}
                 <button class="button button--danger button--sm" type="submit">Удалить</button>
               </form>
@@ -125,7 +128,7 @@
             <a class="button button--secondary button--sm" href="{% url 'methodic-file' methodic.pk %}?download=1">Скачать</a>
             <form method="post"
                   action="{% url 'lab-head-methodic-delete' methodics_work.pk methodic.pk %}"
-                  onsubmit="return confirm('Удалить методичку «{{ methodic.display_name|escapejs }}»?');">
+                  data-confirm="Удалить методичку «{{ methodic.display_name }}»?">
               {% csrf_token %}
               <button class="button button--danger button--sm" type="submit">Удалить</button>
             </form>

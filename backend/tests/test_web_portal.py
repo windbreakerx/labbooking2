@@ -109,6 +109,12 @@ class TestLoginSkeleton:
         assert response.status_code == 200
         assert "Запись на лабораторные" in _page(client, reverse("login"))
 
+    def test_login_page_has_theme_toggle_and_local_font(self, client):
+        page = _page(client, reverse("login"))
+        assert "data-set-theme" in page
+        assert "fonts/golos-cyrillic.woff2" in page
+        assert "js/theme.js" in page
+
     def test_login_post_success(self, client, lab_head):
         response = client.post(
             reverse("login"), {"username": lab_head.email, "password": "pass"}
@@ -367,3 +373,23 @@ class TestLabWorkArchive:
         assert lab_work.is_published is False
         assert "перенесена в архив" in response.content.decode()
         assert "ЛР архива" not in _page(lab_head_client, reverse("lab-head-lab-works"))
+
+
+@pytest.mark.django_db
+class TestSchedulePage:
+    def test_renders_start_time_selects(self, lab_head_client, lab, semester):
+        lab_work = LabWork.objects.create(
+            number=1, title="ЛР расписания", duration_minutes=90, is_published=True
+        )
+        lab_work.laboratories.add(lab)
+        Room.objects.create(
+            training_center=lab.training_center, number="101", laboratory=lab, capacity=10
+        )
+
+        response = lab_head_client.get(reverse("lab-head-schedule"))
+
+        assert response.status_code == 200
+        page = response.content.decode()
+        assert 'name="time"' in page
+        assert "1 пара" in page
+        assert 'type="time"' not in page

@@ -1,21 +1,25 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Расписание{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Расписание</h1>
+  <div>
+    <p class="eyebrow">Кабинет завлаба</p>
+    <h1>Расписание</h1>
+  </div>
   <span class="page-header__aside">{{ laboratory.name }}</span>
 </div>
 
 <div class="card card--narrow">
   <form method="get" class="form-row">
     <label for="sel-room">Аудитория</label>
-    <select name="room" id="sel-room" onchange="this.form.submit()">
+    <select name="room" id="sel-room" data-auto-submit>
       {% for r in rooms %}
         <option value="{{ r.pk }}"{% if selected_room.pk == r.pk %} selected{% endif %}>{{ r.number }} {{ r.name }}</option>
       {% endfor %}
     </select>
     <label for="sel-semester">Семестр</label>
-    <select name="semester" id="sel-semester" onchange="this.form.submit()">
+    <select name="semester" id="sel-semester" data-auto-submit>
       {% for s in semesters %}
         <option value="{{ s.pk }}"{% if selected_semester.pk == s.pk %} selected{% endif %}>{{ s.name }}</option>
       {% endfor %}
@@ -95,7 +99,15 @@
                         <input type="date" name="date" value="{{ session.starts_at|date:'Y-m-d' }}" required>
                       </label>
                       <label>Время
-                        <input type="time" name="time" value="{{ session.starts_at|date:'H:i' }}" required>
+                        <select name="time" required>
+                          {% for group in start_time_groups %}
+                            <optgroup label="{{ group.number }} пара ({{ group.start|time:'H:i' }}–{{ group.end|time:'H:i' }})">
+                              {% for start in group.times %}
+                                <option value="{{ start|time:'H:i' }}"{% if start|time:'H:i' == session.starts_at|time:'H:i' %} selected{% endif %}>{{ start|time:'H:i' }}</option>
+                              {% endfor %}
+                            </optgroup>
+                          {% endfor %}
+                        </select>
                       </label>
                       <label>Преподаватель
                         <select name="teacher">
@@ -112,7 +124,7 @@
                           {% endfor %}
                         </select>
                       </label>
-                      <div id="mode-edit-{{ session.pk }}" class="mode-group" style="display:{% if session.booking_mode == 'GROUP' %}block{% else %}none{% endif %};">
+                      <div id="mode-edit-{{ session.pk }}" class="mode-group{% if session.booking_mode == 'GROUP' %} mode-group--active{% endif %}">
                         <label>Группа-оккупант
                           <select name="occupant_group">
                             <option value="">—</option>
@@ -140,7 +152,7 @@
                         <button class="button button--sm" type="submit">Сохранить</button>
                       </div>
                     </form>
-                    <form method="post" class="form-actions form-actions--compact" onsubmit="return confirm('Отменить слот?');">
+                    <form method="post" class="form-actions form-actions--compact" data-confirm="Отменить слот?">
                       {% csrf_token %}
                       <input type="hidden" name="action" value="delete">
                       <input type="hidden" name="session_pk" value="{{ session.pk }}">
@@ -176,7 +188,16 @@
       <label for="new-date">Дата</label>
       <input type="date" name="date" id="new-date" required>
       <label for="new-time">Время</label>
-      <input type="time" name="time" id="new-time" required>
+      <select name="time" id="new-time" required>
+        <option value="">— выберите время —</option>
+        {% for group in start_time_groups %}
+          <optgroup label="{{ group.number }} пара ({{ group.start|time:'H:i' }}–{{ group.end|time:'H:i' }})">
+            {% for start in group.times %}
+              <option value="{{ start|time:'H:i' }}">{{ start|time:'H:i' }}</option>
+            {% endfor %}
+          </optgroup>
+        {% endfor %}
+      </select>
       <label for="new-teacher">Преподаватель</label>
       <select name="teacher" id="new-teacher">
         <option value="">—</option>
@@ -186,7 +207,7 @@
       <select name="booking_mode" id="new-mode" class="mode-select" data-target="mode-create">
         {% for value, label in booking_modes %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
       </select>
-      <div id="mode-create" class="mode-group form-grid__full" style="display:none;">
+      <div id="mode-create" class="mode-group form-grid__full">
         <label for="new-group">Группа-оккупант</label>
         <select name="occupant_group" id="new-group">
           <option value="">—</option>
@@ -223,7 +244,16 @@
       <label for="series-date">Первый слот</label>
       <input type="date" name="start_date" id="series-date" required>
       <label for="series-time">Время</label>
-      <input type="time" name="start_time" id="series-time" required>
+      <select name="start_time" id="series-time" required>
+        <option value="">— выберите время —</option>
+        {% for group in start_time_groups %}
+          <optgroup label="{{ group.number }} пара ({{ group.start|time:'H:i' }}–{{ group.end|time:'H:i' }})">
+            {% for start in group.times %}
+              <option value="{{ start|time:'H:i' }}">{{ start|time:'H:i' }}</option>
+            {% endfor %}
+          </optgroup>
+        {% endfor %}
+      </select>
       <label for="series-repeat">Повтор</label>
       <select name="repeat" id="series-repeat">
         <option value="NONE">Нет</option>
@@ -243,7 +273,7 @@
       <select name="booking_mode" id="series-mode" class="mode-select" data-target="mode-series">
         {% for value, label in booking_modes %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
       </select>
-      <div id="mode-series" class="mode-group form-grid__full" style="display:none;">
+      <div id="mode-series" class="mode-group form-grid__full">
         <label for="series-group">Группа-оккупант</label>
         <select name="occupant_group" id="series-group">
           <option value="">—</option>
@@ -294,7 +324,7 @@
   <div class="grid grid--2">
     <section class="card">
       <div class="card__header"><h2 class="card__title">Отменить день</h2></div>
-      <form method="post" class="form-stacked" onsubmit="return confirm('Отменить все слоты комнаты за этот день?');">
+      <form method="post" class="form-stacked" data-confirm="Отменить все слоты комнаты за этот день?">
         {% csrf_token %}
         <input type="hidden" name="action" value="cancel_day">
         <input type="hidden" name="room" value="{{ room.pk }}">
@@ -305,7 +335,7 @@
     </section>
     <section class="card">
       <div class="card__header"><h2 class="card__title">Отменить серию</h2></div>
-      <form method="post" class="form-stacked" onsubmit="return confirm('Отменить серию слотов?');">
+      <form method="post" class="form-stacked" data-confirm="Отменить серию слотов?">
         {% csrf_token %}
         <input type="hidden" name="action" value="cancel_series">
         <input type="hidden" name="room" value="{{ room.pk }}">
@@ -323,16 +353,8 @@
     </section>
   </div>
 {% endif %}
+{% endblock %}
 
-<script>
-  document.querySelectorAll('.mode-select').forEach(function(select) {
-    function update() {
-      var target = document.getElementById(select.dataset.target);
-      if (!target) return;
-      target.style.display = select.value === 'GROUP' ? 'block' : 'none';
-    }
-    select.addEventListener('change', update);
-    update();
-  });
-</script>
+{% block extra_js %}
+<script src="{% static 'js/schedule.js' %}?v=20261120" defer></script>
 {% endblock %}

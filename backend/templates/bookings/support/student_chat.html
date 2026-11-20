@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% block title %}{{ ticket.subject }}{% endblock %}
-{% block extra_js %}<script src="{% static 'js/messenger.js' %}" defer></script>{% endblock %}
+{% block extra_js %}<script src="{% static 'js/messenger.js' %}?v=20261120" defer></script>{% endblock %}
 {% block content %}
 <div class="page-header">
   <a class="button button--secondary button--sm" href="{% url 'support' %}">← Обращения</a>
@@ -18,9 +18,12 @@
   </div>
   <form class="composer" hx-post="{% url 'support-reply' ticket.pk %}"
         hx-target="#chat-messages" hx-swap="innerHTML"
+        hx-disabled-elt="find button[type='submit']"
+        hx-indicator="find .htmx-indicator"
         hx-on::after-request="if(event.detail.successful) this.reset()">
     {% csrf_token %}
     <textarea name="body" rows="1" required placeholder="Сообщение…" data-enter-submit></textarea>
+    <span class="field-hint htmx-indicator" role="status">Отправка…</span>
     <button class="button" type="submit">Отправить</button>
   </form>
 </div>

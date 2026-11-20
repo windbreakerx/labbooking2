@@ -24,6 +24,7 @@ staticfiles/
 data/
 backups/
 .agents/
+concepts/
 .cursor/skills/
 .opencode/skills/
 *.sql

@@ -11,7 +11,7 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View
 
-from apps.academics.models import Semester
+from apps.academics.models import ALLOWED_LAB_DURATIONS, Semester
 from apps.academics.scope import (
     laboratory_people_qs,
     laboratory_study_groups_qs,
@@ -37,7 +37,11 @@ from apps.scheduling.services.session_bulk import (
     copy_week,
     create_series,
 )
-from apps.scheduling.services.slot_grid import UNIVERSITY_PAIR_SLOTS, time_to_minutes
+from apps.scheduling.services.slot_grid import (
+    UNIVERSITY_PAIR_SLOTS,
+    pair_start_times_for_duration,
+    time_to_minutes,
+)
 from apps.scheduling.views.portal import PortalLaboratoryMixin
 from apps.users.models import UserRole
 
@@ -120,6 +124,34 @@ def _session_grid(sessions: list[LabSession]):
     ]
 
 
+def _start_time_groups() -> list[dict]:
+    """Допустимые старты для всех длительностей, сгруппированные по парам."""
+    starts = sorted(
+        {
+            start
+            for duration in ALLOWED_LAB_DURATIONS
+            for start in pair_start_times_for_duration(duration)
+        }
+    )
+    groups = []
+    for number, pair_start, pair_end in UNIVERSITY_PAIR_SLOTS:
+        times = [
+            start
+            for start in starts
+            if time_to_minutes(pair_start) <= time_to_minutes(start) < time_to_minutes(pair_end)
+        ]
+        if times:
+            groups.append(
+                {
+                    "number": number,
+                    "start": pair_start,
+                    "end": pair_end,
+                    "times": times,
+                }
+            )
+    return groups
+
+
 def _form_context(laboratory, room, semester) -> dict:
     lab_works = list(laboratory.lab_works.filter(is_published=True).order_by("number", "title"))
     rooms = list(laboratory.rooms.order_by("number"))
@@ -147,6 +179,7 @@ def _form_context(laboratory, room, semester) -> dict:
         "student_groups": groups,
         "booking_modes": LabSessionBookingMode.choices,
         "group_parts": LabSessionGroupPart.choices,
+        "start_time_groups": _start_time_groups(),
         "weekday_labels": WEEKDAY_LABELS,
         "selected_room": room,
         "selected_semester": semester,
